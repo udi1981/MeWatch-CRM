@@ -1,0 +1,7 @@
+{
+  "name": "Smart Lead Manager CRM",
+  "description": "A comprehensive RTL-supported lead management system with dynamic columns, status tracking, time-stamped notes, and AI-assisted insights.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
