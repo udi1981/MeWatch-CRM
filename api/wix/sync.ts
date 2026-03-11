@@ -1,7 +1,14 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { neon } from '@neondatabase/serverless';
+import { jwtVerify } from 'jose';
 const sql = neon(process.env.DATABASE_URL!);
-import { verifyAuth } from '../auth/me';
+const jwtSecret = new TextEncoder().encode(process.env.JWT_SECRET || 'dev-secret-change-me');
+async function verifyAuth(req: VercelRequest) {
+  const cookie = req.headers.cookie || '';
+  const match = cookie.match(/token=([^;]+)/);
+  if (!match) return null;
+  try { const { payload } = await jwtVerify(match[1], jwtSecret); return payload as any; } catch { return null; }
+}
 
 const WIX_HEADERS = {
   'Content-Type': 'application/json',
