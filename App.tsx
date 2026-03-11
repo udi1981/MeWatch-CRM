@@ -36,6 +36,7 @@ const App: React.FC = () => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [authLoading, setAuthLoading] = useState(true);
   const [loginEmail, setLoginEmail] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
   const [loginError, setLoginError] = useState('');
   const [activeTab, setActiveTab] = useState<'dashboard' | 'leads' | 'customers' | 'inquiries' | 'pnl' | 'tasks'>('leads');
   const [leads, setLeads] = useState<Lead[]>([]);
@@ -396,7 +397,7 @@ const App: React.FC = () => {
       e.preventDefault();
       setLoginError('');
       try {
-        const result = await api.login(loginEmail);
+        const result = await api.login(loginEmail, loginPassword);
         if (result.ok) {
           setIsAuthenticated(true);
         } else {
@@ -425,6 +426,17 @@ const App: React.FC = () => {
                 value={loginEmail}
                 onChange={e => setLoginEmail(e.target.value)}
                 placeholder="name@gmail.com"
+                className="w-full px-5 py-4 bg-gray-50 border border-gray-100 rounded-2xl focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium text-gray-700"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-gray-400 mb-2 mr-1">סיסמה</label>
+              <input
+                type="password"
+                required
+                value={loginPassword}
+                onChange={e => setLoginPassword(e.target.value)}
+                placeholder="הכנס סיסמה"
                 className="w-full px-5 py-4 bg-gray-50 border border-gray-100 rounded-2xl focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium text-gray-700"
               />
             </div>
