@@ -27,6 +27,8 @@ async function addLog(level: string, message: string, details?: string) {
   await sql`INSERT INTO logs (level, message, details) VALUES (${level}, ${message}, ${details || null})`;
 }
 
+export const config = { maxDuration: 60 };
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   const user = await verifyAuth(req);
   if (!user) return res.status(401).json({ error: 'Not authenticated' });
