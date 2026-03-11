@@ -4,7 +4,7 @@ const json = (r: Response) => r.ok ? r.json() : r.json().then(e => { throw new E
 
 const api = {
   // Auth
-  login: (email: string, password: string) => fetch('/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password }) }).then(json),
+  login: (email: string, password: string, rememberMe = true) => fetch('/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password, rememberMe }) }).then(json),
   me: () => fetch('/api/auth/me').then(r => r.ok ? r.json() : null),
 
   // Leads

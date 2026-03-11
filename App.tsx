@@ -37,6 +37,8 @@ const App: React.FC = () => {
   const [authLoading, setAuthLoading] = useState(true);
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [rememberMe, setRememberMe] = useState(true);
   const [loginError, setLoginError] = useState('');
   const [activeTab, setActiveTab] = useState<'dashboard' | 'leads' | 'customers' | 'inquiries' | 'pnl' | 'tasks'>('leads');
   const [leads, setLeads] = useState<Lead[]>([]);
@@ -397,7 +399,7 @@ const App: React.FC = () => {
       e.preventDefault();
       setLoginError('');
       try {
-        const result = await api.login(loginEmail, loginPassword);
+        const result = await api.login(loginEmail, loginPassword, rememberMe);
         if (result.ok) {
           setIsAuthenticated(true);
         } else {
@@ -431,15 +433,33 @@ const App: React.FC = () => {
             </div>
             <div>
               <label className="block text-xs font-bold text-gray-400 mb-2 mr-1">סיסמה</label>
-              <input
-                type="password"
-                required
-                value={loginPassword}
-                onChange={e => setLoginPassword(e.target.value)}
-                placeholder="הכנס סיסמה"
-                className="w-full px-5 py-4 bg-gray-50 border border-gray-100 rounded-2xl focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium text-gray-700"
-              />
+              <div className="relative">
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  required
+                  value={loginPassword}
+                  onChange={e => setLoginPassword(e.target.value)}
+                  placeholder="הכנס סיסמה"
+                  className="w-full px-5 py-4 bg-gray-50 border border-gray-100 rounded-2xl focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium text-gray-700 pl-14"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-sm font-bold px-2 py-1"
+                >
+                  {showPassword ? '🙈' : '👁️'}
+                </button>
+              </div>
             </div>
+            <label className="flex items-center gap-2 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={rememberMe}
+                onChange={e => setRememberMe(e.target.checked)}
+                className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+              />
+              <span className="text-sm text-gray-500 font-medium">זכור אותי במכשיר הזה</span>
+            </label>
             {loginError && <p className="text-red-500 text-sm text-center font-medium">{loginError}</p>}
             <button
               type="submit"

@@ -15,7 +15,7 @@ function verifyPassword(password: string, storedHash: string): boolean {
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-  const { email: rawEmail, password } = req.body || {};
+  const { email: rawEmail, password, rememberMe } = req.body || {};
   if (!rawEmail) return res.status(400).json({ error: 'Email required' });
   if (!password) return res.status(400).json({ error: 'Password required' });
   const email = rawEmail.trim().toLowerCase();
@@ -28,11 +28,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(401).json({ error: 'אימייל או סיסמה שגויים' });
   }
 
+  const expiry = rememberMe ? '30d' : '24h';
+  const maxAge = rememberMe ? 30 * 24 * 60 * 60 : 24 * 60 * 60;
+
   const token = await new SignJWT({ userId: user.id, email: user.email, role: user.role })
     .setProtectedHeader({ alg: 'HS256' })
-    .setExpirationTime('30d')
+    .setExpirationTime(expiry)
     .sign(secret);
 
-  res.setHeader('Set-Cookie', `token=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${30 * 24 * 60 * 60}${process.env.NODE_ENV === 'production' ? '; Secure' : ''}`);
+  res.setHeader('Set-Cookie', `token=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${process.env.NODE_ENV === 'production' ? '; Secure' : ''}`);
   return res.json({ ok: true, user: { id: user.id, email: user.email, name: user.name, role: user.role } });
 }
