@@ -31,9 +31,9 @@ const api = {
   syncWix: () => fetch('/api/wix/sync', { method: 'POST' }).then(json),
 
   // AI
-  aiAnalytics: (prompt: string, systemInstruction: string) => fetch('/api/ai/analytics', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, systemInstruction }) }).then(json),
-  aiExtract: (prompt: string, systemInstruction: string) => fetch('/api/ai/extract', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, systemInstruction, model: 'gemini-2.0-flash' }) }).then(json),
-  aiSmartFilter: (prompt: string, systemInstruction: string) => fetch('/api/ai/smart-filter', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, systemInstruction }) }).then(json),
+  aiAnalytics: (prompt: string, systemInstruction: string) => fetch('/api/ai', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, systemInstruction, type: 'analytics' }) }).then(json),
+  aiExtract: (prompt: string, systemInstruction: string) => fetch('/api/ai', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, systemInstruction, type: 'extract' }) }).then(json),
+  aiSmartFilter: (prompt: string, systemInstruction: string) => fetch('/api/ai', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, systemInstruction, type: 'smart-filter' }) }).then(json),
 };
 
 export default api;

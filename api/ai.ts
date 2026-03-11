@@ -1,24 +1,35 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { verifyAuth } from '../auth/me';
+import { verifyAuth } from './auth/me';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   const user = await verifyAuth(req);
   if (!user) return res.status(401).json({ error: 'Not authenticated' });
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-  const { prompt, systemInstruction, model } = req.body;
+  const { prompt, systemInstruction, model, type } = req.body;
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) return res.status(500).json({ error: 'Gemini API key not configured' });
 
   try {
-    const modelName = model || 'gemini-2.5-flash';
+    // Default model per type
+    let modelName = model;
+    if (!modelName) {
+      if (type === 'extract') modelName = 'gemini-2.0-flash';
+      else modelName = 'gemini-2.5-flash';
+    }
+
+    const generationConfig: any = {};
+    if (type === 'smart-filter') {
+      generationConfig.responseMimeType = 'application/json';
+    }
+
     const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
         systemInstruction: systemInstruction ? { parts: [{ text: systemInstruction }] } : undefined,
-        generationConfig: { responseMimeType: 'application/json' },
+        ...(Object.keys(generationConfig).length > 0 ? { generationConfig } : {}),
       }),
     });
 
