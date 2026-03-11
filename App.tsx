@@ -348,6 +348,21 @@ const App: React.FC = () => {
       );
     }
 
+    // Special sort for payment_failed: newest failed first, with non-renewed on top
+    if (wixStatusFilter === 'payment_failed') {
+      result.sort((a, b) => {
+        const aHasActive = a.dynamicData?.hasActiveSubscription === 'כן' || a.dynamicData?.wixStatus === 'ACTIVE';
+        const bHasActive = b.dynamicData?.hasActiveSubscription === 'כן' || b.dynamicData?.wixStatus === 'ACTIVE';
+        // Non-renewed (need to call) first
+        if (!aHasActive && bHasActive) return -1;
+        if (aHasActive && !bHasActive) return 1;
+        // Then by cancellation date, newest first
+        const dateA = a.dynamicData?.cancellationDate ? new Date(String(a.dynamicData.cancellationDate).split('.').reverse().join('-')).getTime() || 0 : 0;
+        const dateB = b.dynamicData?.cancellationDate ? new Date(String(b.dynamicData.cancellationDate).split('.').reverse().join('-')).getTime() || 0 : 0;
+        return dateB - dateA;
+      });
+    }
+
     return result;
   }, [leads, searchQuery, wixStatusFilter, dateRange]);
 
