@@ -1,5 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { sql } from '../db';
+import { neon } from '@neondatabase/serverless';
+const sql = neon(process.env.DATABASE_URL!);
 import { SignJWT } from 'jose';
 
 const secret = new TextEncoder().encode(process.env.JWT_SECRET || 'dev-secret-change-me');
