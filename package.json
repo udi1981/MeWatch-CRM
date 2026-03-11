@@ -9,9 +9,13 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "react-dom": "^19.2.3",
+    "@google/genai": "^1.34.0",
+    "@wix/data": "^1.0.412",
+    "@wix/pricing-plans": "^1.0.290",
+    "@wix/sdk": "^1.21.3",
+    "@wix/stores": "^1.0.704",
     "react": "^19.2.3",
-    "@google/genai": "^1.34.0"
+    "react-dom": "^19.2.3"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",

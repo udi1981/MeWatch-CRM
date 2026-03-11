@@ -58,10 +58,62 @@ export interface Lead {
   endingReason?: string;
   subscriptionType?: string;
   subscriptionStatus?: string;
+  customerId?: string;
+}
+
+export interface Customer {
+  id: string;
+  name: string;
+  phone: string;
+  email?: string;
+  source: 'wix' | 'inquiry' | 'manual' | 'import';
+  createdAt: string;
+  subscriptionIds: string[];
+  inquiryIds: string[];
+  tags: string[];
+  totalSpent?: number;
+  ecomSpent?: number;
+  lastActivity?: string;
+  wixMemberStatus?: string;
+}
+
+export interface Inquiry {
+  id: string;
+  customerId?: string;
+  name: string;
+  phone: string;
+  email?: string;
+  subject: string;
+  message: string;
+  source: 'wix_form' | 'manual';
+  status: 'new' | 'handled' | 'closed';
+  createdAt: string;
+}
+
+export interface RevenueChannel {
+  id: string;
+  name: string;
+  isAutomatic: boolean;
+}
+
+export interface PnLEntry {
+  id: string;
+  type: 'expense' | 'revenue';
+  channelId?: string;
+  category: string;
+  description: string;
+  amount: number;
+  date: string;
+  source: 'manual' | 'icount' | 'wix';
+  invoiceId?: string;
 }
 
 export interface AppState {
   leads: Lead[];
+  customers: Customer[];
+  inquiries: Inquiry[];
+  pnlEntries: PnLEntry[];
+  revenueChannels: RevenueChannel[];
   statuses: StatusConfig[];
   columns: Column[];
   tasks: Task[];
