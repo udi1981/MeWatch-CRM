@@ -233,14 +233,10 @@ const LeadTable: React.FC<LeadTableProps> = ({ leads, statuses, columns, allColu
         <table className="w-full text-right border-collapse sticky-header" style={{ tableLayout: 'auto' }}>
           <thead className="sticky top-0 z-20 shadow-sm">
             <tr className="bg-gray-50 border-b border-gray-200">
-              {/* Expand arrow */}
-              <th className="px-1 py-2.5 text-xs font-bold text-gray-500 w-6 text-center bg-gray-50"></th>
-              {/* # */}
-              <th className="px-1 py-2.5 text-xs font-bold text-gray-500 w-8 text-center bg-gray-50">#</th>
               {/* === FIXED COLUMNS: Name, Phone, Call, Status, Renewed === */}
               <th
                 onClick={() => handleSort('name')}
-                className="px-2 py-2.5 text-xs font-bold text-gray-600 bg-gray-50 cursor-pointer hover:bg-gray-100 transition-colors select-none whitespace-nowrap"
+                className="px-1.5 py-1.5 text-[11px] font-bold text-gray-600 bg-gray-50 cursor-pointer hover:bg-gray-100 transition-colors select-none whitespace-nowrap"
               >
                 <div className="flex items-center">
                   <SortIndicator columnId="name" />
@@ -249,17 +245,17 @@ const LeadTable: React.FC<LeadTableProps> = ({ leads, statuses, columns, allColu
               </th>
               <th
                 onClick={() => handleSort('phone')}
-                className="px-2 py-2.5 text-xs font-bold text-gray-600 bg-gray-50 cursor-pointer hover:bg-gray-100 transition-colors select-none whitespace-nowrap"
+                className="px-1.5 py-1.5 text-[11px] font-bold text-gray-600 bg-gray-50 cursor-pointer hover:bg-gray-100 transition-colors select-none whitespace-nowrap"
               >
                 <div className="flex items-center">
                   <SortIndicator columnId="phone" />
                   טלפון
                 </div>
               </th>
-              <th className="px-1 py-2.5 text-xs font-bold text-gray-600 bg-gray-50 whitespace-nowrap">חייג</th>
+              <th className="px-1 py-1.5 text-[11px] font-bold text-gray-600 bg-gray-50 whitespace-nowrap">חייג</th>
               <th
                 onClick={() => handleSort('status')}
-                className="px-2 py-2.5 text-xs font-bold text-gray-600 bg-gray-50 cursor-pointer hover:bg-gray-100 transition-colors select-none whitespace-nowrap"
+                className="px-1.5 py-1.5 text-[11px] font-bold text-gray-600 bg-gray-50 cursor-pointer hover:bg-gray-100 transition-colors select-none whitespace-nowrap"
               >
                 <div className="flex items-center">
                   <SortIndicator columnId="status" />
@@ -268,7 +264,7 @@ const LeadTable: React.FC<LeadTableProps> = ({ leads, statuses, columns, allColu
               </th>
               <th
                 onClick={() => handleSort('renewed')}
-                className="px-1 py-2.5 text-xs font-bold text-gray-600 bg-gray-50 cursor-pointer hover:bg-gray-100 transition-colors select-none whitespace-nowrap"
+                className="px-1 py-1.5 text-[11px] font-bold text-gray-600 bg-gray-50 cursor-pointer hover:bg-gray-100 transition-colors select-none whitespace-nowrap"
                 title="האם חידש מנוי?"
               >
                 <div className="flex items-center">
@@ -281,7 +277,7 @@ const LeadTable: React.FC<LeadTableProps> = ({ leads, statuses, columns, allColu
                 <th
                   key={col.id}
                   onClick={() => handleSort(col.id)}
-                  className="px-2 py-2.5 text-xs font-bold text-gray-600 bg-gray-50 cursor-pointer hover:bg-gray-100 transition-colors select-none whitespace-nowrap"
+                  className="px-1.5 py-1.5 text-[11px] font-bold text-gray-600 bg-gray-50 cursor-pointer hover:bg-gray-100 transition-colors select-none whitespace-nowrap"
                 >
                   <div className="flex items-center">
                     <SortIndicator columnId={col.id} />
@@ -289,7 +285,7 @@ const LeadTable: React.FC<LeadTableProps> = ({ leads, statuses, columns, allColu
                   </div>
                 </th>
               ))}
-              <th className="px-2 py-2.5 text-xs font-bold text-gray-600 bg-gray-50 whitespace-nowrap">הערות</th>
+              <th className="px-1.5 py-1.5 text-[11px] font-bold text-gray-600 bg-gray-50 whitespace-nowrap">הערות</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-50">
@@ -316,23 +312,20 @@ const LeadTable: React.FC<LeadTableProps> = ({ leads, statuses, columns, allColu
                       transition: 'transform 0.2s ease'
                     }}
                   >
-                    {/* Expand arrow */}
-                    <td className="px-1 py-2 text-center" onClick={(e) => orderCount > 1 ? toggleExpand(lead.id, e) : e.stopPropagation()}>
-                      {orderCount > 1 ? (
-                        <button className="text-gray-400 hover:text-blue-600 transition-colors text-[11px]">
-                          {isExpanded ? '▼' : '▶'}
-                        </button>
-                      ) : <span className="text-gray-200 text-[10px]">—</span>}
-                    </td>
-                    {/* Row # */}
-                    <td className="px-1 py-2 text-[10px] text-gray-400 text-center font-mono">{index + 1}</td>
-                    {/* Name */}
-                    <td className="px-2 py-2 text-sm font-semibold text-gray-900 whitespace-nowrap max-w-[140px] truncate">
-                      {lead.name}
+                    {/* Name with expand arrow */}
+                    <td className="px-1.5 py-1 text-[13px] font-semibold text-gray-900 whitespace-nowrap max-w-[140px] truncate">
+                      <div className="flex items-center gap-0.5">
+                        {orderCount > 1 ? (
+                          <button onClick={(e) => toggleExpand(lead.id, e)} className="text-gray-400 hover:text-blue-600 transition-colors text-[9px] shrink-0">
+                            {isExpanded ? '▼' : '▶'}
+                          </button>
+                        ) : null}
+                        <span className="truncate">{lead.name}</span>
+                      </div>
                     </td>
                     {/* Phone */}
-                    <td className="px-2 py-2 text-xs text-gray-700 font-mono whitespace-nowrap" dir="ltr">
-                      <div className="flex items-center gap-1">
+                    <td className="px-1.5 py-1 text-[11px] text-gray-700 font-mono whitespace-nowrap" dir="ltr">
+                      <div className="flex items-center gap-0.5">
                         <a
                           href={getWixUrl(lead.phone)}
                           target="_blank"
@@ -352,16 +345,16 @@ const LeadTable: React.FC<LeadTableProps> = ({ leads, statuses, columns, allColu
                       </div>
                     </td>
                     {/* Call button */}
-                    <td className="px-1 py-2" onClick={(e) => e.stopPropagation()}>
+                    <td className="px-0.5 py-1" onClick={(e) => e.stopPropagation()}>
                       <a
                         href={`tel:${lead.phone}`}
-                        className="inline-flex items-center gap-0.5 text-blue-600 hover:text-blue-800 font-medium text-[10px] border border-blue-200 rounded-lg px-1.5 py-0.5 bg-blue-50/50 transition-colors"
+                        className="inline-flex items-center gap-0.5 text-blue-600 hover:text-blue-800 font-medium text-[10px] border border-blue-200 rounded-md px-1 py-0.5 bg-blue-50/50 transition-colors"
                       >
                         <PhoneIcon /> חייג
                       </a>
                     </td>
                     {/* Status */}
-                    <td className="px-1 py-2" onClick={(e) => e.stopPropagation()}>
+                    <td className="px-0.5 py-1" onClick={(e) => e.stopPropagation()}>
                       <select
                         value={lead.statusId}
                         onChange={(e) => onStatusChange(lead.id, e.target.value)}
@@ -373,30 +366,30 @@ const LeadTable: React.FC<LeadTableProps> = ({ leads, statuses, columns, allColu
                       </select>
                     </td>
                     {/* Renewed indicator */}
-                    <td className="px-1 py-2 text-center whitespace-nowrap">
+                    <td className="px-0.5 py-1 text-center whitespace-nowrap">
                       {renewed === true && (
-                        <span className="inline-flex items-center text-[10px] text-green-700 bg-green-50 px-1.5 py-0.5 rounded-full font-bold" title="חידש מנוי">
+                        <span className="inline-flex items-center text-[9px] text-green-700 bg-green-50 px-1 py-0.5 rounded-full font-bold" title="חידש מנוי">
                           ✓ חידש
                         </span>
                       )}
                       {renewed === false && (
-                        <span className="inline-flex items-center text-[10px] text-red-600 bg-red-50 px-1.5 py-0.5 rounded-full font-bold" title="לא חידש - צריך להתקשר">
+                        <span className="inline-flex items-center text-[9px] text-red-600 bg-red-50 px-1 py-0.5 rounded-full font-bold" title="לא חידש - צריך להתקשר">
                           ✗ להתקשר
                         </span>
                       )}
                     </td>
                     {/* Dynamic columns */}
                     {columns.map(col => (
-                      <td key={col.id} className="px-2 py-2 text-xs text-gray-700 whitespace-nowrap">
+                      <td key={col.id} className="px-1.5 py-1 text-[11px] text-gray-700 whitespace-nowrap">
                         {col.id === 'totalOrders' && orderCount > 1 ? (
-                          <span className="inline-flex items-center gap-0.5 bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded-full text-[10px] font-bold">
+                          <span className="inline-flex items-center gap-0.5 bg-blue-50 text-blue-700 px-1 py-0.5 rounded-full text-[10px] font-bold">
                             {lead.dynamicData[col.id] || ''}
                           </span>
                         ) : (lead.dynamicData[col.id] || '')}
                       </td>
                     ))}
                     {/* Notes */}
-                    <td className="px-2 py-2 text-[10px] text-gray-500 max-w-[150px] truncate italic">
+                    <td className="px-1.5 py-1 text-[10px] text-gray-500 max-w-[120px] truncate italic">
                       {lead.notes.length > 0 ? lead.notes[0].text : ''}
                     </td>
                   </tr>
@@ -419,14 +412,13 @@ const LeadTable: React.FC<LeadTableProps> = ({ leads, statuses, columns, allColu
                   {/* Expanded sub-rows for multiple orders */}
                   {isExpanded && orderSummaries.length > 0 && orderSummaries.map((os, i) => (
                     <tr key={`${lead.id}-order-${i}`} className="bg-blue-50/40 border-r-4 border-r-blue-300">
-                      <td className="px-1 py-1.5"></td>
-                      <td className="px-1 py-1.5 text-[10px] text-blue-400 text-center font-mono">{i + 1}/{orderSummaries.length}</td>
-                      <td colSpan={5} className="px-2 py-1.5 text-[10px] text-gray-500 italic">
+                      <td className="px-1.5 py-1 text-[10px] text-blue-400 font-mono">{i + 1}/{orderSummaries.length}</td>
+                      <td colSpan={4} className="px-1.5 py-1 text-[10px] text-gray-500 italic">
                         {os.status === 'ACTIVE' ? '🟢 פעיל' : os.status === 'CANCELED' ? '🔴 בוטל' : `⚪ ${os.status}`}
                         {os.plan ? ` — ${os.plan}` : ''}
                       </td>
                       {columns.map(col => (
-                        <td key={col.id} className="px-2 py-1.5 text-[10px] text-gray-600 whitespace-nowrap">
+                        <td key={col.id} className="px-1.5 py-1 text-[10px] text-gray-600 whitespace-nowrap">
                           {col.id === 'planName' ? os.plan :
                            col.id === 'wixStatus' ? wixStatusHebrew(os.status) :
                            col.id === 'planPrice' ? (os.price > 0 ? `₪${os.price}` : '') :
