@@ -1,8 +1,8 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import { GoogleGenAI } from '@google/genai';
 import { Lead } from '../types';
 import { computeFinancialMetrics } from '../lib/analytics';
+import api from '../lib/api';
 
 interface Message {
   id: string;
@@ -171,46 +171,14 @@ const AIAnalyticsChat: React.FC<AIAnalyticsChatProps> = ({ leads, onClose }) => 
     setIsLoading(true);
 
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       const dataSummary = buildDataSummary(leads);
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
-        contents: `אתה אנליסט עסקי (Business Analyst) מומחה של מערכת CRM לניהול מנויים ומכירות. ענה תמיד בעברית.
+      const systemInstruction = `אתה אנליסט עסקי (Business Analyst) מומחה של מערכת CRM לניהול מנויים ומכירות. ענה תמיד בעברית.
+התפקיד שלך: לנתח נתונים כספיים, נטישה, ביצועי מנויים, בריאות תשלומים, ולתת תובנות עסקיות.
+ענה בפורמט JSON: {"answer": "...", "metrics": [{"label": "...", "value": "..."}], "table": {"headers": [...], "rows": [...]}}`;
 
-התפקיד שלך:
-- לנתח נתונים כספיים: הכנסות, MRR, מגמות, רווחיות לפי מנוי
-- לנתח נטישה (churn): אחוזי ביטול, סיבות, מגמות חודשיות, חיזוי
-- לנתח ביצועי מנויים: איזה מנוי הכי רווחי, איזה בסיכון
-- לנתח בריאות תשלומים: תשלומים נכשלים, החזרים, חובות
-- לתת תובנות עסקיות ולהמליץ על פעולות
-- לחשב ערך חיי לקוח (CLV) ומדדים עסקיים
-
-להלן כל הנתונים העסקיים העדכניים:
-
-${dataSummary}
-
-השאלה של המשתמש: "${text.trim()}"
-
-ענה בפורמט JSON בלבד עם המבנה הבא:
-{
-  "answer": "תשובה טקסטואלית מפורטת בעברית עם תובנות ניתוח עסקי",
-  "metrics": [{"label": "שם המדד", "value": "ערך"}],
-  "table": {"headers": ["עמודה1", "עמודה2"], "rows": [["ערך1", "ערך2"]]}
-}
-
-הכללים:
-- תמיד כלול "answer" עם תשובה ברורה ומפורטת
-- כלול "metrics" כשיש מספרים חשובים — הכנסות, אחוזים, מגמות
-- כלול "table" כשמציגים השוואות, רשימות או דוחות
-- אם מבקשים רשימת לקוחות, כלול שם, טלפון, מנוי, סכום ששילם, סיבת ביטול
-- היה מדויק עם המספרים - השתמש בנתונים האמיתיים בלבד
-- כשמדברים על מגמות, השווה בין חודשים וציין עלייה/ירידה באחוזים
-- תמיד הוסף המלצה עסקית כשרלוונטי`,
-        config: {
-          responseMimeType: "application/json",
-        }
-      });
+      const prompt = `${dataSummary}\n\nהשאלה של המשתמש: "${text.trim()}"`;
+      const response = await api.aiAnalytics(prompt, systemInstruction);
 
       // Sanitize control characters that Gemini sometimes includes in JSON strings
       const raw = (response.text || '{}').replace(/[\x00-\x1F\x7F]/g, (ch: string) => ch === '\n' || ch === '\r' || ch === '\t' ? ch : '');

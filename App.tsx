@@ -19,33 +19,7 @@ import SystemLogModal from './components/SystemLogModal';
 import AIExtractModal from './components/AIExtractModal';
 import AIAnalyticsChat from './components/AIAnalyticsChat';
 import SmartViewBar, { ViewCommand } from './components/SmartViewBar';
-
-const WIX_SITE_ID = process.env.WIX_SITE_ID || '';
-const WIX_AUTH_TOKEN = process.env.WIX_AUTH_TOKEN || '';
-
-const WIX_HEADERS = {
-  'Content-Type': 'application/json',
-  'Wix-Site-Id': WIX_SITE_ID,
-  'Authorization': WIX_AUTH_TOKEN,
-};
-
-// Map Wix cancellation cause to Hebrew
-function mapCancellationReason(order: any): string {
-  const cause = (order.cancellation?.cause || '').toString();
-  const status = order.status || '';
-
-  if (cause === 'MEMBER_ACTION' || cause.includes('member')) return 'בוטל ע"י הלקוח';
-  if (cause === 'OWNER_ACTION' || cause.includes('owner')) return 'בוטל ע"י החברה';
-  if (cause === 'PAYMENT_FAILURE' || cause.toLowerCase().includes('payment')) return 'תשלום נכשל';
-
-  if (status === 'ACTIVE') return 'פעיל';
-  if (status === 'PAUSED') return 'מושהה';
-  if (status === 'ENDED') return 'הסתיים';
-  if (['CANCELED', 'OFFLINE_CANCELLED'].includes(status)) {
-    return cause || 'בוטל';
-  }
-  return cause || '';
-}
+import api from './lib/api';
 
 // Wix status filter options
 const WIX_FILTER_OPTIONS = [
@@ -60,27 +34,18 @@ const WIX_FILTER_OPTIONS = [
 
 const App: React.FC = () => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [loginEmail, setLoginEmail] = useState('');
+  const [loginError, setLoginError] = useState('');
   const [activeTab, setActiveTab] = useState<'dashboard' | 'leads' | 'customers' | 'inquiries' | 'pnl' | 'tasks'>('leads');
-  const [leads, setLeads] = useState<Lead[]>(() => {
-    const saved = localStorage.getItem('crm_leads');
-    return saved ? JSON.parse(saved) : MOCK_LEADS;
-  });
-  const [customers, setCustomers] = useState<Customer[]>(() => {
-    const saved = localStorage.getItem('crm_customers');
-    return saved ? JSON.parse(saved) : [];
-  });
-  const [inquiries, setInquiries] = useState<Inquiry[]>(() => {
-    const saved = localStorage.getItem('crm_inquiries');
-    return saved ? JSON.parse(saved) : [];
-  });
+  const [leads, setLeads] = useState<Lead[]>([]);
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [inquiries, setInquiries] = useState<Inquiry[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [statuses, setStatuses] = useState<StatusConfig[]>(INITIAL_STATUSES);
   const [columns, setColumns] = useState<Column[]>(INITIAL_COLUMNS);
-  const [logs, setLogs] = useState<LogEntry[]>(() => {
-    const saved = localStorage.getItem('crm_logs');
-    return saved ? JSON.parse(saved) : [];
-  });
-  
+  const [logs, setLogs] = useState<LogEntry[]>([]);
+
   const [searchQuery, setSearchQuery] = useState('');
   const [wixStatusFilter, setWixStatusFilter] = useState('all');
   const [isSyncing, setIsSyncing] = useState(false);
@@ -101,22 +66,25 @@ const App: React.FC = () => {
   const [dateRange, setDateRange] = useState<{ from: string; to: string }>({ from: '', to: '' });
   const [activeSmartView, setActiveSmartView] = useState<ViewCommand | null>(null);
 
+  // Check auth on mount
   useEffect(() => {
-    localStorage.setItem('crm_leads', JSON.stringify(leads));
-  }, [leads]);
+    api.me().then(data => {
+      if (data?.ok) setIsAuthenticated(true);
+    }).finally(() => setAuthLoading(false));
+  }, []);
 
+  // Load data from API when authenticated
   useEffect(() => {
-    localStorage.setItem('crm_customers', JSON.stringify(customers));
-  }, [customers]);
+    if (!isAuthenticated) return;
+    Promise.all([
+      api.getLeads().then(setLeads).catch(() => {}),
+      api.getCustomers().then(setCustomers).catch(() => {}),
+      api.getInquiries().then(setInquiries).catch(() => {}),
+      api.getLogs().then(setLogs).catch(() => {}),
+    ]);
+  }, [isAuthenticated]);
 
-  useEffect(() => {
-    localStorage.setItem('crm_inquiries', JSON.stringify(inquiries));
-  }, [inquiries]);
-
-  useEffect(() => {
-    localStorage.setItem('crm_logs', JSON.stringify(logs));
-  }, [logs]);
-
+  // Save visibleColumns to localStorage (UI preference only)
   useEffect(() => {
     localStorage.setItem('crm_visible_columns', JSON.stringify(visibleColumns));
   }, [visibleColumns]);
@@ -138,539 +106,20 @@ const App: React.FC = () => {
     addLog('info', 'מתחיל סנכרון מלא מול Wix...');
 
     try {
-      // Step 1: Fetch plans
-      const plansMap: Record<string, string> = {};
-      const plansRes = await fetch('/wixapi/pricing-plans/v2/plans', { method: 'GET', headers: WIX_HEADERS });
-      if (plansRes.ok) {
-        const plansData = await plansRes.json();
-        for (const p of (plansData.plans || [])) plansMap[p.id] = p.name;
+      const result = await api.syncWix();
+      if (result.ok) {
+        addLog('success', `סנכרון הושלם! ${result.stats?.leads || 0} מנויים, ${result.stats?.customers || 0} לקוחות.`);
+        // Reload all data from DB
+        const [newLeads, newCustomers, newInquiries, newLogs] = await Promise.all([
+          api.getLeads(), api.getCustomers(), api.getInquiries(), api.getLogs()
+        ]);
+        setLeads(newLeads);
+        setCustomers(newCustomers);
+        setInquiries(newInquiries);
+        setLogs(newLogs);
+      } else {
+        addLog('error', 'שגיאת סנכרון', result.error);
       }
-      addLog('info', `נטענו ${Object.keys(plansMap).length} תוכניות מנוי.`);
-
-      // Step 2: Paginate ALL orders directly (50 per page, ~65 requests for ~3200 orders)
-      const allOrders: any[] = [];
-      let orderOffset = 0;
-      const ORDER_LIMIT = 50;
-      const DELAY_MS = 150;
-
-      const fetchOrderPage = async (offset: number, retries = 2): Promise<{ orders: any[]; hasMore: boolean }> => {
-        try {
-          const res = await fetch(`/wixapi/pricing-plans/v2/orders?limit=${ORDER_LIMIT}&offset=${offset}`, {
-            method: 'GET', headers: WIX_HEADERS
-          });
-          if (res.status === 429 && retries > 0) {
-            await new Promise(r => setTimeout(r, 2000));
-            return fetchOrderPage(offset, retries - 1);
-          }
-          if (!res.ok) return { orders: [], hasMore: false };
-          const data = await res.json();
-          const orders = data.orders || [];
-          return { orders, hasMore: orders.length === ORDER_LIMIT };
-        } catch { return { orders: [], hasMore: false }; }
-      };
-
-      while (true) {
-        const { orders, hasMore } = await fetchOrderPage(orderOffset);
-        allOrders.push(...orders);
-        if (orderOffset === 0 || orderOffset % 500 === 0) {
-          addLog('info', `נטענו ${allOrders.length} הזמנות...`);
-        }
-        if (!hasMore || orders.length === 0) break;
-        orderOffset += ORDER_LIMIT;
-        await new Promise(r => setTimeout(r, DELAY_MS));
-      }
-      addLog('info', `סה"כ ${allOrders.length} הזמנות.`);
-
-      // Step 3: Fetch ALL contacts (paginated, no label filter)
-      const contactsMap: Record<string, any> = {};
-      let contactOffset = 0;
-      while (true) {
-        const res = await fetch('/wixapi/contacts/v4/contacts/query', {
-          method: 'POST', headers: WIX_HEADERS,
-          body: JSON.stringify({ query: { paging: { limit: 100, offset: contactOffset } } })
-        });
-        if (!res.ok) break;
-        const data = await res.json();
-        const contacts = data.contacts || [];
-        for (const c of contacts) contactsMap[c.id] = c;
-        if (contactOffset === 0 || contactOffset % 500 === 0) {
-          addLog('info', `נטענו ${Object.keys(contactsMap).length} / ${data.pagingMetadata?.total || '?'} אנשי קשר...`);
-        }
-        if (contacts.length < 100 || !data.pagingMetadata?.hasNext) break;
-        contactOffset += 100;
-        await new Promise(r => setTimeout(r, 80));
-      }
-      addLog('info', `סה"כ ${Object.keys(contactsMap).length} אנשי קשר.`);
-
-      // Step 4: Fetch Wix Store e-commerce orders
-      const ecomOrders: any[] = [];
-      let ecomCursor: string | null = null;
-      try {
-        while (true) {
-          const body: any = { search: {} };
-          if (ecomCursor) body.search.cursorPaging = { limit: 50, cursor: ecomCursor };
-          else body.search.cursorPaging = { limit: 50 };
-          const res = await fetch('/wixapi/ecom/v1/orders/search', { method: 'POST', headers: WIX_HEADERS, body: JSON.stringify(body) });
-          if (!res.ok) break;
-          const data = await res.json();
-          const orders = data.orders || [];
-          ecomOrders.push(...orders);
-          const nextCursor = data.metadata?.cursors?.next || data.pagingMetadata?.cursors?.next;
-          if (!nextCursor || orders.length < 50) break;
-          ecomCursor = nextCursor;
-          await new Promise(r => setTimeout(r, 100));
-        }
-        if (ecomOrders.length > 0) addLog('info', `נטענו ${ecomOrders.length} הזמנות חנות (e-commerce).`);
-      } catch { /* e-commerce API not available — skip silently */ }
-
-      // Step 5: Fetch Wix Forms submissions (inquiries/contact forms)
-      const wixFormSubmissions: any[] = [];
-      try {
-        let formCursor: string | null = null;
-        while (true) {
-          const body: any = { query: {} };
-          if (formCursor) body.query.cursorPaging = { limit: 50, cursor: formCursor };
-          else body.query.cursorPaging = { limit: 50 };
-          const res = await fetch('/wixapi/wix-forms/v4/submissions/query', {
-            method: 'POST', headers: WIX_HEADERS, body: JSON.stringify(body)
-          });
-          if (!res.ok) break;
-          const data = await res.json();
-          const submissions = data.submissions || [];
-          wixFormSubmissions.push(...submissions);
-          const nextCursor = data.pagingMetadata?.cursors?.next;
-          if (!nextCursor || submissions.length < 50) break;
-          formCursor = nextCursor;
-          await new Promise(r => setTimeout(r, 80));
-        }
-        if (wixFormSubmissions.length > 0) addLog('info', `נטענו ${wixFormSubmissions.length} פניות מטפסי Wix.`);
-      } catch { /* Wix Forms API not available — skip silently */ }
-
-      // Build ecom data per contactId
-      const ecomByContact: Record<string, { orders: any[]; totalSpent: number }> = {};
-      for (const eo of ecomOrders) {
-        const cid = eo.buyerInfo?.contactId || eo.buyer?.contactId;
-        if (!cid) continue;
-        if (!ecomByContact[cid]) ecomByContact[cid] = { orders: [], totalSpent: 0 };
-        ecomByContact[cid].orders.push(eo);
-        const amount = parseFloat(eo.priceSummary?.total?.amount || eo.totals?.total || '0');
-        ecomByContact[cid].totalSpent += amount;
-      }
-
-      // Step 5: Build contactId → order data
-      const contactData: Record<string, { statuses: string[]; causes: string[]; orders: any[] }> = {};
-      let ordersWithoutContactId = 0;
-      for (const o of allOrders) {
-        const cid = o.buyer?.contactId;
-        if (!cid) { ordersWithoutContactId++; continue; }
-        if (!contactData[cid]) contactData[cid] = { statuses: [], causes: [], orders: [] };
-        contactData[cid].statuses.push(o.status || '');
-        contactData[cid].causes.push(o.cancellation?.cause || '');
-        contactData[cid].orders.push(o);
-      }
-      if (ordersWithoutContactId > 0) addLog('warning', `${ordersWithoutContactId} הזמנות ללא מזהה לקוח (דילוג).`);
-
-      // Step 6: Deduplicate — keep the most recent order per contact (for primary display)
-      const latestOrderByContact: Record<string, any> = {};
-      for (const order of allOrders) {
-        const cid = order.buyer?.contactId;
-        if (!cid) continue;
-        const existing = latestOrderByContact[cid];
-        const orderDate = order.createdDate || order._createdDate;
-        const existingDate = existing?.createdDate || existing?._createdDate;
-        if (!existing || new Date(orderDate) > new Date(existingDate)) {
-          latestOrderByContact[cid] = order;
-        }
-      }
-
-      // Step 7: Build leads — one per contact, store ALL orders for expansion
-      let totalRevenue = 0;
-      let totalActiveRevenue = 0;
-      let totalCanceled = 0;
-      let totalPaymentFailed = 0;
-      let totalEcomRevenue = 0;
-
-      // Log formData structure from first order (for debugging custom form fields)
-      const firstOrderWithForm = allOrders.find((o: any) => o.formData?.submissionData);
-      if (firstOrderWithForm) {
-        console.log('[Wix Sync] formData.submissionData sample:', JSON.stringify(firstOrderWithForm.formData.submissionData, null, 2));
-        addLog('info', `נמצאו שדות טופס מותאמים: ${Object.keys(firstOrderWithForm.formData.submissionData).join(', ')}`);
-      }
-
-      const wixLeads: Lead[] = Object.values(latestOrderByContact).map((order: any) => {
-        const cid = order.buyer?.contactId;
-        const contact = contactsMap[cid] || {};
-        const firstName = contact.info?.name?.first || '';
-        const lastName = contact.info?.name?.last || '';
-        const phoneItems = contact.info?.phones?.items || contact.info?.phones || [];
-        const primaryPhone = phoneItems.find?.((p: any) => p.primary);
-        const phone = primaryPhone?.phone || phoneItems[0]?.phone || '';
-        const emailItems = contact.info?.emails?.items || contact.info?.emails || [];
-        const primaryEmail = emailItems.find?.((e: any) => e.primary);
-        const email = primaryEmail?.email || emailItems[0]?.email || '';
-
-        const cd = contactData[cid] || { statuses: [], causes: [], orders: [] };
-
-        // Extract custom form fields (SIM number, etc.) from checkout form — check ALL orders for this contact
-        let simNumber = '';
-        for (const o of cd.orders) {
-          const sub = o.formData?.submissionData || {};
-          simNumber = sub['מספר סים'] || sub['sim'] || sub['SIM'] || sub['simNumber'] || sub['Sim Number'] || '';
-          if (simNumber) break;
-        }
-        const hasActive = cd.statuses.includes('ACTIVE');
-        // Use BEST status: if ANY order is active, show as active
-        const primaryOrder = hasActive ? (cd.orders.find((o: any) => o.status === 'ACTIVE') || order) : order;
-        const cancelReason = hasActive ? 'פעיל' : mapCancellationReason(order);
-
-        // Extract financial data from primary order (for display)
-        const activeOrder = hasActive ? (cd.orders.find((o: any) => o.status === 'ACTIVE') || order) : order;
-        const price = parseFloat(activeOrder.planPrice || activeOrder.priceDetails?.planPrice || activeOrder.pricing?.prices?.[0]?.price?.total || activeOrder.priceDetails?.total || '0');
-        const currency = activeOrder.pricing?.prices?.[0]?.price?.currency || activeOrder.priceDetails?.currency || 'ILS';
-        const lastPayment = activeOrder.lastPaymentStatus || '';
-        const orderStartDate = activeOrder.startDate || activeOrder.createdDate || activeOrder._createdDate || '';
-        const totalOrders = cd.orders.length;
-
-        // Compute total paid across all orders for this contact (price × cycles)
-        let contactTotalPaid = 0;
-        for (const o of cd.orders) {
-          const p = parseFloat(o.planPrice || o.priceDetails?.planPrice || o.pricing?.prices?.[0]?.price?.total || o.priceDetails?.total || '0');
-          const cycleCount = o.currentCycle?.index || 1;
-          if (p > 0) contactTotalPaid += p * cycleCount;
-        }
-        totalRevenue += contactTotalPaid;
-        if (hasActive) totalActiveRevenue += price;
-        if (cancelReason === 'תשלום נכשל') totalPaymentFailed++;
-        if (cancelReason.includes('בוטל')) totalCanceled++;
-
-        // E-commerce data for this contact
-        const ecom = ecomByContact[cid] || { orders: [], totalSpent: 0 };
-        totalEcomRevenue += ecom.totalSpent;
-
-        // Store compact order summaries for expandable rows (avoid storing full raw order objects — too large for localStorage)
-        const orderSummaries = cd.orders
-          .sort((a: any, b: any) => new Date(b.createdDate || b._createdDate || 0).getTime() - new Date(a.createdDate || a._createdDate || 0).getTime())
-          .map((o: any) => ({
-            id: o._id || o.id,
-            plan: plansMap[o.planId] || o.planName || '?',
-            status: o.status,
-            price: parseFloat(o.planPrice || o.priceDetails?.planPrice || o.pricing?.prices?.[0]?.price?.total || o.priceDetails?.total || '0'),
-            paid: (parseFloat(o.planPrice || o.priceDetails?.planPrice || o.pricing?.prices?.[0]?.price?.total || o.priceDetails?.total || '0') * (o.currentCycle?.index || 1)),
-            cycles: o.currentCycle?.index || 1,
-            start: o.startDate || o.createdDate || o._createdDate || '',
-            cancel: o.cancellation?.cause || '',
-            cancelReason: mapCancellationReason(o),
-            cancelDate: o.endDate || o._updatedDate || o.updatedDate || '',
-            payment: o.lastPaymentStatus || '',
-          }));
-
-        return {
-          id: cid,
-          name: `${firstName} ${lastName}`.trim() || email || 'לקוח Wix',
-          phone,
-          email,
-          statusId: 'new',
-          createdAt: order.createdDate || order._createdDate || new Date().toISOString(),
-          notes: [],
-          dynamicData: {
-            planName: hasActive
-              ? (plansMap[activeOrder.planId] || activeOrder.planName || 'מנוי Wix')
-              : (plansMap[order.planId] || order.planName || 'מנוי Wix'),
-            wixStatus: hasActive ? 'ACTIVE' : order.status,
-            hasActiveSubscription: hasActive ? 'כן' : 'לא',
-            cancellationReason: cancelReason,
-            cancellationDate: (!hasActive && (order.updatedDate || order._updatedDate))
-              ? new Date(order.updatedDate || order._updatedDate).toLocaleDateString('he-IL')
-              : '',
-            endingReason: cancelReason,
-            planPrice: price > 0 ? `₪${price.toFixed(0)}` : '',
-            currency,
-            lastPaymentStatus: lastPayment === 'PAID' ? 'שולם' : lastPayment === 'NOT_PAID' ? 'לא שולם' : lastPayment === 'REFUNDED' ? 'הוחזר' : lastPayment === 'FAILED' ? 'נכשל' : lastPayment || '',
-            totalPaid: contactTotalPaid > 0 ? `₪${contactTotalPaid.toFixed(0)}` : '',
-            totalOrders: totalOrders.toString(),
-            startDate: orderStartDate ? new Date(orderStartDate).toLocaleDateString('he-IL') : '',
-            allOrders: JSON.stringify(orderSummaries),
-            ecomTotalSpent: ecom.totalSpent > 0 ? `₪${ecom.totalSpent.toFixed(0)}` : '',
-            ecomOrderCount: ecom.orders.length > 0 ? ecom.orders.length.toString() : '',
-            simNumber: simNumber.toString(),
-          }
-        };
-      });
-
-      // Sort: canceled/payment-failed at top, then active
-      const priorityOrder = (lead: Lead): number => {
-        const reason = (lead.dynamicData?.cancellationReason || '').toString();
-        const wixStatus = (lead.dynamicData?.wixStatus || '').toString();
-        if (reason === 'תשלום נכשל') return 0;
-        if (reason.includes('בוטל')) return 1;
-        if (['CANCELED', 'OFFLINE_CANCELLED'].includes(wixStatus)) return 2;
-        if (wixStatus === 'ENDED') return 3;
-        return 4; // active
-      };
-      wixLeads.sort((a, b) => priorityOrder(a) - priorityOrder(b));
-
-      // Merge: update existing Wix leads, add new ones, keep non-Wix leads
-      const allWixContactIds = new Set(wixLeads.map(l => l.id));
-      setLeads(prev => {
-        const existingWixIds = new Set(wixLeads.map(l => l.id));
-        const nonWixLeads = prev.filter(l => !existingWixIds.has(l.id) && !allWixContactIds.has(l.id));
-        const mergedWixLeads = wixLeads.map(wl => {
-          const existing = prev.find(l => l.id === wl.id);
-          if (existing) {
-            return { ...wl, statusId: existing.statusId, notes: existing.notes, reminderAt: existing.reminderAt };
-          }
-          return wl;
-        });
-        return [...mergedWixLeads, ...nonWixLeads];
-      });
-
-      // Build unified customers from synced leads (dedup by email → phone)
-      const customerMap = new Map<string, Customer>();
-      const findKey = (email?: string, phone?: string): string | undefined => {
-        if (email) {
-          for (const [key, c] of customerMap) {
-            if (c.email && c.email.toLowerCase() === email.toLowerCase()) return key;
-          }
-        }
-        if (phone) {
-          const cleanPhone = phone.replace(/[^0-9]/g, '');
-          for (const [key, c] of customerMap) {
-            if (c.phone && c.phone.replace(/[^0-9]/g, '') === cleanPhone) return key;
-          }
-        }
-        return undefined;
-      };
-
-      // Build a lookup: contactId → subscription tags/stats for tag generation
-      const contactSubStats: Record<string, { hasActive: boolean; hasCancelled: boolean; hasPaymentFailed: boolean; totalPaid: number }> = {};
-      for (const lead of wixLeads) {
-        const reason = (lead.dynamicData?.cancellationReason || '').toString();
-        const wixStatus = (lead.dynamicData?.wixStatus || '').toString();
-        const paid = parseFloat((lead.dynamicData?.totalPaid || '0').toString().replace('₪', '').replace(/,/g, ''));
-        contactSubStats[lead.id] = {
-          hasActive: wixStatus === 'ACTIVE',
-          hasCancelled: ['CANCELED', 'OFFLINE_CANCELLED', 'ENDED'].includes(wixStatus),
-          hasPaymentFailed: reason === 'תשלום נכשל',
-          totalPaid: paid,
-        };
-      }
-
-      for (const lead of wixLeads) {
-        const existingKey = findKey(lead.email, lead.phone);
-        if (existingKey) {
-          const existing = customerMap.get(existingKey)!;
-          if (!existing.subscriptionIds.includes(lead.id)) {
-            existing.subscriptionIds.push(lead.id);
-          }
-          if (!existing.email && lead.email) existing.email = lead.email;
-          if (!existing.phone && lead.phone) existing.phone = lead.phone;
-        } else {
-          const customerId = `cust_${lead.id}`;
-          customerMap.set(customerId, {
-            id: customerId,
-            name: lead.name,
-            phone: lead.phone,
-            email: lead.email,
-            source: 'wix',
-            createdAt: lead.createdAt,
-            subscriptionIds: [lead.id],
-            inquiryIds: [],
-            tags: [],
-          });
-        }
-      }
-
-      // Now add ALL remaining Wix contacts that don't have subscriptions
-      for (const [contactId, contact] of Object.entries(contactsMap) as [string, any][]) {
-        const firstName = contact.info?.name?.first || '';
-        const lastName = contact.info?.name?.last || '';
-        const name = `${firstName} ${lastName}`.trim();
-        const phoneItems = contact.info?.phones?.items || contact.info?.phones || [];
-        const primaryPhone = phoneItems.find?.((p: any) => p.primary);
-        const phone = primaryPhone?.phone || phoneItems[0]?.phone || '';
-        const emailItems = contact.info?.emails?.items || contact.info?.emails || [];
-        const primaryEmail = emailItems.find?.((e: any) => e.primary);
-        const email = primaryEmail?.email || emailItems[0]?.email || '';
-
-        // Skip if already exists in customerMap (was added as subscriber)
-        const existingKey = findKey(email, phone);
-        if (existingKey) continue;
-
-        // Skip contacts with no name and no email and no phone
-        if (!name && !email && !phone) continue;
-
-        const customerId = `cust_${contactId}`;
-        customerMap.set(customerId, {
-          id: customerId,
-          name: name || email || 'איש קשר Wix',
-          phone: phone || '',
-          email: email || undefined,
-          source: 'wix',
-          createdAt: contact.createdDate || contact._createdDate || new Date().toISOString(),
-          subscriptionIds: [],
-          inquiryIds: [],
-          tags: [],
-        });
-      }
-
-      // Assign marketing tags to all customers
-      for (const [, customer] of customerMap) {
-        const tags: string[] = [];
-        const contactId = customer.id.replace('cust_', '');
-        const contact = contactsMap[contactId] as any;
-
-        // Subscription-based tags
-        let custTotalPaid = 0;
-        let custEcomSpent = 0;
-        let hasActiveSubscription = false;
-        let hasCancelledSubscription = false;
-        let hasPaymentFailed = false;
-
-        for (const sid of customer.subscriptionIds) {
-          const stats = contactSubStats[sid];
-          if (stats) {
-            if (stats.hasActive) hasActiveSubscription = true;
-            if (stats.hasCancelled) hasCancelledSubscription = true;
-            if (stats.hasPaymentFailed) hasPaymentFailed = true;
-            custTotalPaid += stats.totalPaid;
-          }
-        }
-
-        if (customer.subscriptionIds.length > 0) tags.push('subscriber');
-        if (hasActiveSubscription) tags.push('paying');
-        if (hasCancelledSubscription && !hasActiveSubscription) tags.push('cancelled');
-        if (hasPaymentFailed) tags.push('payment_failed');
-
-        // E-commerce tags
-        const ecom = ecomByContact[contactId];
-        if (ecom && ecom.orders.length > 0) {
-          tags.push('ecom_buyer');
-          custEcomSpent = ecom.totalSpent;
-        }
-
-        // Wix contact metadata tags
-        if (contact) {
-          const memberStatus = contact.memberStatus || '';
-          customer.wixMemberStatus = memberStatus;
-          if (memberStatus === 'APPROVED' || memberStatus === 'ACTIVE') tags.push('member');
-
-          // Label keys from Wix (e.g. contacts/customers, contacts/leads)
-          const labelKeys: string[] = contact.info?.labelKeys?.items || contact.info?.labelKeys || [];
-          if (labelKeys.some((lk: string) => lk.includes('subscribers') || lk.includes('newsletter'))) tags.push('email_subscriber');
-          if (labelKeys.some((lk: string) => lk.includes('sms'))) tags.push('sms_subscriber');
-        }
-
-        // If no subscription and no ecom → contact only
-        if (customer.subscriptionIds.length === 0 && !ecom) tags.push('contact_only');
-
-        customer.tags = tags;
-        customer.totalSpent = custTotalPaid + custEcomSpent;
-        customer.ecomSpent = custEcomSpent;
-        customer.lastActivity = contact?.lastActivity?.activityDate || contact?._updatedDate || '';
-      }
-
-      // Merge with existing customers (preserve manual/import customers, update wix ones)
-      setCustomers(prev => {
-        const newCustomers = Array.from(customerMap.values());
-        const newIds = new Set(newCustomers.map(c => c.id));
-        const nonWixCustomers = prev.filter(c => !newIds.has(c.id) && c.source !== 'wix');
-        // Preserve inquiryIds from existing customers
-        const merged = newCustomers.map(nc => {
-          const existing = prev.find(c => c.id === nc.id);
-          if (existing) return { ...nc, inquiryIds: existing.inquiryIds };
-          return nc;
-        });
-        return [...merged, ...nonWixCustomers];
-      });
-
-      // Link leads to their customer IDs
-      const leadToCustomer = new Map<string, string>();
-      for (const [, customer] of customerMap) {
-        for (const sid of customer.subscriptionIds) {
-          leadToCustomer.set(sid, customer.id);
-        }
-      }
-      setLeads(prev => prev.map(l => {
-        const cid = leadToCustomer.get(l.id);
-        return cid ? { ...l, customerId: cid } : l;
-      }));
-
-      // Build inquiries from Wix Forms submissions
-      if (wixFormSubmissions.length > 0) {
-        const newInquiries: Inquiry[] = wixFormSubmissions.map((sub: any) => {
-          const fields = sub.submissions || sub.formData || sub.values || {};
-          // Try common field names for contact info
-          const name = fields['שם'] || fields['שם מלא'] || fields['name'] || fields['full_name'] || fields['fullName'] || '';
-          const email = fields['אימייל'] || fields['email'] || fields['דואר אלקטרוני'] || '';
-          const phone = fields['טלפון'] || fields['phone'] || fields['נייד'] || fields['mobile'] || '';
-          const subject = fields['נושא'] || fields['subject'] || sub.formName || '';
-          const message = fields['הודעה'] || fields['message'] || fields['תוכן'] || fields['content'] || '';
-
-          // Try to match to customer
-          let customerId: string | undefined;
-          if (email || phone) {
-            for (const [, cust] of customerMap) {
-              if (email && cust.email && cust.email.toLowerCase() === email.toLowerCase()) {
-                customerId = cust.id;
-                break;
-              }
-              if (phone && cust.phone) {
-                const cleanPhone = phone.replace(/[^0-9]/g, '');
-                if (cust.phone.replace(/[^0-9]/g, '') === cleanPhone) {
-                  customerId = cust.id;
-                  break;
-                }
-              }
-            }
-          }
-
-          return {
-            id: sub._id || sub.id || Math.random().toString(36).substr(2, 9),
-            customerId,
-            name: name.toString(),
-            phone: phone.toString(),
-            email: email.toString(),
-            subject: subject.toString(),
-            message: message.toString(),
-            source: 'wix_form' as const,
-            status: 'new' as const,
-            createdAt: sub._createdDate || sub.createdDate || sub.submittedDate || new Date().toISOString(),
-          };
-        });
-
-        // Merge: update existing, add new, keep manual inquiries
-        setInquiries(prev => {
-          const newIds = new Set(newInquiries.map(i => i.id));
-          const manualInquiries = prev.filter(i => i.source === 'manual');
-          const existingWixInquiries = prev.filter(i => i.source === 'wix_form' && !newIds.has(i.id));
-          // Preserve status of existing inquiries
-          const merged = newInquiries.map(ni => {
-            const existing = prev.find(i => i.id === ni.id);
-            if (existing) return { ...ni, status: existing.status };
-            return ni;
-          });
-          return [...merged, ...existingWixInquiries, ...manualInquiries];
-        });
-
-        // Link inquiry IDs to customers
-        for (const inq of newInquiries) {
-          if (inq.customerId) {
-            const cust = customerMap.get(inq.customerId);
-            if (cust && !cust.inquiryIds.includes(inq.id)) {
-              cust.inquiryIds.push(inq.id);
-            }
-          }
-        }
-
-        addLog('info', `${newInquiries.length} פניות מטפסים עובדו (${newInquiries.filter(i => i.customerId).length} מקושרות ללקוח).`);
-      }
-
-      const withPhone = wixLeads.filter(l => l.phone).length;
-      const noPhone = wixLeads.filter(l => !l.phone).length;
-      const contactOnlyCount = Array.from(customerMap.values()).filter(c => c.tags.includes('contact_only')).length;
-      const subscriberCount = Array.from(customerMap.values()).filter(c => c.tags.includes('subscriber')).length;
-      addLog('success', `סנכרון מלא הושלם! ${Object.keys(contactsMap).length} אנשי קשר → ${customerMap.size} לקוחות (${subscriberCount} מנויים, ${contactOnlyCount} אנשי קשר בלבד). ${allOrders.length} הזמנות מנויים${ecomOrders.length > 0 ? ` + ${ecomOrders.length} הזמנות חנות` : ''}.`);
-      addLog('info', `דוח כספי: הכנסות מנויים ₪${totalRevenue.toFixed(0)}${totalEcomRevenue > 0 ? ` | הכנסות חנות ₪${totalEcomRevenue.toFixed(0)}` : ''} | הכנסה חודשית פעילה ₪${totalActiveRevenue.toFixed(0)} | ביטולים: ${totalCanceled} | תשלום נכשל: ${totalPaymentFailed}`);
     } catch (error: any) {
       console.error('Wix sync error:', error);
       addLog('error', 'שגיאת סנכרון', error.message);
@@ -681,9 +130,11 @@ const App: React.FC = () => {
 
   const handleUpdateLeadStatus = (leadId: string, statusId: string) => {
     setLeads(prev => prev.map(l => l.id === leadId ? { ...l, statusId } : l));
+    api.updateLead(leadId, { statusId } as any).catch(() => {});
   };
   const handleUpdateLeadReminder = (leadId: string, reminderAt: string | undefined) => {
     setLeads(prev => prev.map(l => l.id === leadId ? { ...l, reminderAt } : l));
+    api.updateLead(leadId, { reminderAt } as any).catch(() => {});
   };
   const handleAddNote = (leadId: string, noteText: string) => {
     const newNote: Note = {
@@ -691,7 +142,12 @@ const App: React.FC = () => {
       text: noteText,
       timestamp: new Date().toLocaleString('he-IL')
     };
-    setLeads(prev => prev.map(l => l.id === leadId ? { ...l, notes: [newNote, ...l.notes] } : l));
+    setLeads(prev => {
+      const updated = prev.map(l => l.id === leadId ? { ...l, notes: [newNote, ...l.notes] } : l);
+      const lead = updated.find(l => l.id === leadId);
+      if (lead) api.updateLead(leadId, { notes: lead.notes } as any).catch(() => {});
+      return updated;
+    });
   };
   const handleAddTask = (task: Omit<Task, 'id' | 'isCompleted'>) => {
     const newTask: Task = { ...task, id: Math.random().toString(36).substr(2, 9), isCompleted: false };
@@ -715,16 +171,19 @@ const App: React.FC = () => {
       dynamicData: newLeadData.dynamicData || {},
     };
     setLeads([newLead, ...leads]);
+    api.addLead(newLead).catch(() => {});
     addLog('info', `נוסף מנוי חדש: ${newLead.name}`);
     setIsAddLeadOpen(false);
   };
   const handleDeleteLead = (leadId: string) => {
     if (window.confirm('האם אתה בטוח שברצונך למחוק מנוי זה?')) {
       setLeads(prev => prev.filter(l => l.id !== leadId));
+      api.deleteLead(leadId).catch(() => {});
     }
   };
   const handleInquiryStatusChange = (id: string, status: Inquiry['status']) => {
     setInquiries(prev => prev.map(i => i.id === id ? { ...i, status } : i));
+    api.updateInquiryStatus(id, status).catch(() => {});
   };
   const handleAddInquiry = (data: { name: string; phone: string; email: string; subject: string; message: string; customerId?: string }) => {
     const newInquiry: Inquiry = {
@@ -740,6 +199,7 @@ const App: React.FC = () => {
       createdAt: new Date().toISOString(),
     };
     setInquiries(prev => [newInquiry, ...prev]);
+    api.addInquiry(newInquiry).catch(() => {});
     // Link to customer if matched
     if (data.customerId) {
       setCustomers(prev => prev.map(c =>
@@ -921,43 +381,61 @@ const App: React.FC = () => {
   const selectedLead = useMemo(() => leads.find(l => l.id === selectedLeadId), [leads, selectedLeadId]);
   const hasErrors = logs.some(l => l.level === 'error');
 
-  // --- Auth Screen (Registration) ---
+  // --- Loading ---
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-[#f1f5f9] flex items-center justify-center" dir="rtl">
+        <div className="text-gray-400 text-lg font-medium">טוען...</div>
+      </div>
+    );
+  }
+
+  // --- Auth Screen ---
   if (!isAuthenticated) {
+    const handleLogin = async (e: React.FormEvent) => {
+      e.preventDefault();
+      setLoginError('');
+      try {
+        const result = await api.login(loginEmail);
+        if (result.ok) {
+          setIsAuthenticated(true);
+        } else {
+          setLoginError(result.error || 'שגיאה בהתחברות');
+        }
+      } catch (err: any) {
+        setLoginError(err.message || 'שגיאה בהתחברות');
+      }
+    };
+
     return (
       <div className="min-h-screen bg-[#f1f5f9] flex items-center justify-center p-4 font-sans" dir="rtl">
         <div className="bg-white w-full max-w-md rounded-[2.5rem] shadow-2xl p-8 border border-gray-100 flex flex-col relative overflow-hidden">
-          {/* Logo / Title Section */}
           <div className="flex flex-col items-center mb-8">
-            <div className="w-16 h-16 bg-[#1e40af] rounded-2xl flex items-center justify-center text-white text-3xl font-black mb-4 shadow-xl shadow-blue-100">U</div>
-            <h2 className="text-[#1e40af] font-black text-xs uppercase tracking-widest mb-1">Welcome to ULIVER</h2>
+            <div className="w-16 h-16 bg-[#1e40af] rounded-2xl flex items-center justify-center text-white text-3xl font-black mb-4 shadow-xl shadow-blue-100">M</div>
+            <h2 className="text-[#1e40af] font-black text-xs uppercase tracking-widest mb-1">MeWatch CRM</h2>
             <h1 className="text-2xl font-bold text-gray-800">כניסה למערכת הניהול</h1>
           </div>
 
-          <form onSubmit={(e) => { e.preventDefault(); setIsAuthenticated(true); }} className="space-y-5">
+          <form onSubmit={handleLogin} className="space-y-5">
             <div>
               <label className="block text-xs font-bold text-gray-400 mb-2 mr-1">כתובת אימייל</label>
-              <input 
-                type="email" 
-                required 
-                placeholder="name@gmail.com" 
+              <input
+                type="email"
+                required
+                value={loginEmail}
+                onChange={e => setLoginEmail(e.target.value)}
+                placeholder="name@gmail.com"
                 className="w-full px-5 py-4 bg-gray-50 border border-gray-100 rounded-2xl focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium text-gray-700"
               />
             </div>
-            
-            <button 
-              type="submit" 
+            {loginError && <p className="text-red-500 text-sm text-center font-medium">{loginError}</p>}
+            <button
+              type="submit"
               className="w-full bg-[#1e40af] hover:bg-[#1e3a8a] text-white font-bold py-4 rounded-2xl shadow-lg shadow-blue-100 transition-all transform active:scale-95 text-lg"
             >
               התחבר עכשיו
             </button>
           </form>
-
-          {/* Moved Terms to the bottom of the white frame */}
-          <div className="mt-12 pt-6 border-t border-gray-50 flex justify-center gap-6 text-[10px] font-bold text-gray-300 uppercase tracking-widest">
-            <a href="#" className="hover:text-blue-600 transition-colors">Privacy Policy</a>
-            <a href="#" className="hover:text-blue-600 transition-colors">Terms of Use</a>
-            <a href="#" className="hover:text-blue-600 transition-colors">Contact Support</a>
-          </div>
         </div>
       </div>
     );
@@ -1258,7 +736,7 @@ const App: React.FC = () => {
         <SystemLogModal 
           logs={logs}
           onClose={() => setIsLogsOpen(false)}
-          onClear={() => { setLogs([]); localStorage.removeItem('crm_logs'); }}
+          onClear={() => { setLogs([]); api.clearLogs().catch(() => {}); }}
         />
       )}
 

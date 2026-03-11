@@ -1,6 +1,6 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import { GoogleGenAI } from '@google/genai';
+import api from '../lib/api';
 
 export interface ViewCommand {
   columns: string[];        // column IDs to show (empty = keep current)
@@ -230,15 +230,7 @@ const SmartViewBar: React.FC<SmartViewBarProps> = ({
     }
 
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-      const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
-        contents: `${SYSTEM_PROMPT}\n\nהבקשה של המשתמש: "${command}"`,
-        config: {
-          responseMimeType: 'application/json',
-        }
-      });
-
+      const response = await api.aiSmartFilter(`${SYSTEM_PROMPT}\n\nהבקשה של המשתמש: "${command}"`, '');
       const raw = response.text || '';
       const parsed: ViewCommand = JSON.parse(raw);
 

@@ -1,7 +1,7 @@
 
 import React, { useState } from 'react';
-import { GoogleGenAI, Type } from '@google/genai';
 import { Column, Lead } from '../types';
+import api from '../lib/api';
 
 interface AIExtractModalProps {
   onClose: () => void;
@@ -21,38 +21,13 @@ const AIExtractModal: React.FC<AIExtractModalProps> = ({ onClose, onAddLead, col
     setError(null);
 
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-      const dynamicSchema: any = {};
-      columns.forEach(col => {
-        dynamicSchema[col.id] = {
-          type: Type.STRING,
-          description: `The ${col.label} of the user mentioned in the text.`
-        };
-      });
+      const colDescriptions = columns.map(col => `${col.id}: ${col.label}`).join(', ');
+      const prompt = `Extract lead information from the following text (it could be an email, a website notification, or a message).
+Text: "${text}"
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
-        contents: `Extract lead information from the following text (it could be an email, a website notification, or a message).
-        Text: "${text}"`,
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              name: { type: Type.STRING, description: 'Full name of the lead.' },
-              phone: { type: Type.STRING, description: 'Phone number of the lead.' },
-              email: { type: Type.STRING, description: 'Email address of the lead.' },
-              dynamicData: {
-                type: Type.OBJECT,
-                properties: dynamicSchema,
-                description: 'Additional structured information matching the CRM columns.'
-              }
-            },
-            required: ['name']
-          }
-        }
-      });
+Return JSON with: name (required), phone, email, dynamicData (object with keys: ${colDescriptions})`;
 
+      const response = await api.aiExtract(prompt, 'Extract lead contact info from text. Return JSON with name, phone, email, dynamicData fields.');
       const extractedData = JSON.parse(response.text || '{}');
       if (!extractedData.name) {
         throw new Error('לא הצלחנו לזהות שם של ליד בטקסט שסופק.');
