@@ -78,7 +78,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (orderOffset === 0 || orderOffset % 500 === 0) await addLog('info', `נטענו ${allOrders.length} הזמנות...`);
       if (!hasMore || orders.length === 0) break;
       orderOffset += ORDER_LIMIT;
-      await new Promise(r => setTimeout(r, 150));
+      await new Promise(r => setTimeout(r, 50));
     }
     await addLog('info', `סה"כ ${allOrders.length} הזמנות.`);
 
@@ -97,7 +97,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (contactOffset === 0 || contactOffset % 500 === 0) await addLog('info', `נטענו ${Object.keys(contactsMap).length} / ${data.pagingMetadata?.total || '?'} אנשי קשר...`);
       if (contacts.length < 100 || !data.pagingMetadata?.hasNext) break;
       contactOffset += 100;
-      await new Promise(r => setTimeout(r, 80));
+      await new Promise(r => setTimeout(r, 30));
     }
     await addLog('info', `סה"כ ${Object.keys(contactsMap).length} אנשי קשר.`);
 
@@ -117,7 +117,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const nextCursor = data.metadata?.cursors?.next || data.pagingMetadata?.cursors?.next;
         if (!nextCursor || orders.length < 50) break;
         ecomCursor = nextCursor;
-        await new Promise(r => setTimeout(r, 100));
+        await new Promise(r => setTimeout(r, 30));
       }
       if (ecomOrders.length > 0) await addLog('info', `נטענו ${ecomOrders.length} הזמנות חנות (e-commerce).`);
     } catch { /* skip */ }
@@ -138,7 +138,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const nextCursor = data.pagingMetadata?.cursors?.next;
         if (!nextCursor || submissions.length < 50) break;
         formCursor = nextCursor;
-        await new Promise(r => setTimeout(r, 80));
+        await new Promise(r => setTimeout(r, 30));
       }
       if (wixFormSubmissions.length > 0) await addLog('info', `נטענו ${wixFormSubmissions.length} פניות מטפסי Wix.`);
     } catch { /* skip */ }
@@ -279,14 +279,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       };
     });
 
-    // Upsert leads to DB (preserve existing statusId, notes, reminderAt)
-    for (const lead of wixLeads) {
-      const existing = await sql`SELECT status_id, notes, reminder_at FROM leads WHERE id = ${lead.id}`;
-      if (existing.length > 0) {
-        await sql`UPDATE leads SET name = ${lead.name}, phone = ${lead.phone}, email = ${lead.email || null}, dynamic_data = ${JSON.stringify(lead.dynamicData)}, customer_id = ${null}, source = ${'wix'} WHERE id = ${lead.id}`;
-      } else {
-        await sql`INSERT INTO leads (id, name, phone, email, status_id, created_at, dynamic_data, notes, source) VALUES (${lead.id}, ${lead.name}, ${lead.phone}, ${lead.email || null}, ${lead.statusId}, ${lead.createdAt}, ${JSON.stringify(lead.dynamicData)}, ${JSON.stringify(lead.notes)}, ${'wix'})`;
-      }
+    // Upsert leads to DB in parallel batches (preserve existing statusId, notes, reminderAt)
+    const BATCH = 20;
+    for (let i = 0; i < wixLeads.length; i += BATCH) {
+      const batch = wixLeads.slice(i, i + BATCH);
+      await Promise.all(batch.map(lead =>
+        sql`INSERT INTO leads (id, name, phone, email, status_id, created_at, dynamic_data, notes, source)
+            VALUES (${lead.id}, ${lead.name}, ${lead.phone}, ${lead.email || null}, ${lead.statusId}, ${lead.createdAt}, ${JSON.stringify(lead.dynamicData)}, ${JSON.stringify(lead.notes)}, ${'wix'})
+            ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, phone = EXCLUDED.phone, email = EXCLUDED.email, dynamic_data = EXCLUDED.dynamic_data, source = EXCLUDED.source`
+      ));
     }
 
     // Build customers
@@ -389,62 +390,58 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       customer.lastActivity = contact?.lastActivity?.activityDate || contact?._updatedDate || '';
     }
 
-    // Upsert customers to DB (preserve inquiryIds from existing)
-    for (const [, customer] of customerMap) {
-      const existing = await sql`SELECT inquiry_ids FROM customers WHERE id = ${customer.id}`;
-      const existingInquiryIds = existing.length > 0 ? existing[0].inquiry_ids || [] : [];
-      const mergedInquiryIds = [...new Set([...existingInquiryIds, ...customer.inquiryIds])];
-
-      await sql`INSERT INTO customers (id, name, phone, email, source, created_at, subscription_ids, inquiry_ids, tags, total_spent, ecom_spent, last_activity, wix_member_status)
-                VALUES (${customer.id}, ${customer.name}, ${customer.phone || ''}, ${customer.email || null}, ${customer.source}, ${customer.createdAt}, ${customer.subscriptionIds}, ${mergedInquiryIds}, ${customer.tags}, ${customer.totalSpent || 0}, ${customer.ecomSpent || 0}, ${customer.lastActivity || null}, ${customer.wixMemberStatus || null})
-                ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, phone = EXCLUDED.phone, email = EXCLUDED.email, subscription_ids = EXCLUDED.subscription_ids, inquiry_ids = EXCLUDED.inquiry_ids, tags = EXCLUDED.tags, total_spent = EXCLUDED.total_spent, ecom_spent = EXCLUDED.ecom_spent, last_activity = EXCLUDED.last_activity, wix_member_status = EXCLUDED.wix_member_status`;
+    // Upsert customers to DB in parallel batches (only subscribers + ecom buyers, skip contact-only)
+    const customersToSave = Array.from(customerMap.values()).filter((c: any) => !c.tags.includes('contact_only') || c.tags.length > 1);
+    for (let i = 0; i < customersToSave.length; i += BATCH) {
+      const batch = customersToSave.slice(i, i + BATCH);
+      await Promise.all(batch.map((customer: any) =>
+        sql`INSERT INTO customers (id, name, phone, email, source, created_at, subscription_ids, inquiry_ids, tags, total_spent, ecom_spent, last_activity, wix_member_status)
+            VALUES (${customer.id}, ${customer.name}, ${customer.phone || ''}, ${customer.email || null}, ${customer.source}, ${customer.createdAt}, ${customer.subscriptionIds}, ${customer.inquiryIds}, ${customer.tags}, ${customer.totalSpent || 0}, ${customer.ecomSpent || 0}, ${customer.lastActivity || null}, ${customer.wixMemberStatus || null})
+            ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, phone = EXCLUDED.phone, email = EXCLUDED.email, subscription_ids = EXCLUDED.subscription_ids, tags = EXCLUDED.tags, total_spent = EXCLUDED.total_spent, ecom_spent = EXCLUDED.ecom_spent, last_activity = EXCLUDED.last_activity, wix_member_status = EXCLUDED.wix_member_status`
+      ));
     }
 
-    // Link leads to customers
+    // Link leads to customers in parallel batches
+    const linkPairs: { custId: string; sid: string }[] = [];
     for (const [, customer] of customerMap) {
-      for (const sid of customer.subscriptionIds) {
-        await sql`UPDATE leads SET customer_id = ${customer.id} WHERE id = ${sid}`;
-      }
+      for (const sid of (customer as any).subscriptionIds) linkPairs.push({ custId: (customer as any).id, sid });
+    }
+    for (let i = 0; i < linkPairs.length; i += BATCH) {
+      const batch = linkPairs.slice(i, i + BATCH);
+      await Promise.all(batch.map(p => sql`UPDATE leads SET customer_id = ${p.custId} WHERE id = ${p.sid}`));
     }
 
-    // Build inquiries from form submissions
+    // Build inquiries from form submissions (batch)
     if (wixFormSubmissions.length > 0) {
-      for (const sub of wixFormSubmissions) {
+      const inquiries = wixFormSubmissions.map(sub => {
         const fields = sub.submissions || sub.formData || sub.values || {};
         const name = (fields['שם'] || fields['שם מלא'] || fields['name'] || fields['full_name'] || fields['fullName'] || '').toString();
         const email = (fields['אימייל'] || fields['email'] || fields['דואר אלקטרוני'] || '').toString();
         const phone = (fields['טלפון'] || fields['phone'] || fields['נייד'] || fields['mobile'] || '').toString();
         const subject = (fields['נושא'] || fields['subject'] || sub.formName || '').toString();
         const message = (fields['הודעה'] || fields['message'] || fields['תוכן'] || fields['content'] || '').toString();
-
         let customerId: string | null = null;
         if (email || phone) {
           for (const [, cust] of customerMap) {
             if (email && cust.email && cust.email.toLowerCase() === email.toLowerCase()) { customerId = cust.id; break; }
-            if (phone && cust.phone) {
-              if (cust.phone.replace(/[^0-9]/g, '') === phone.replace(/[^0-9]/g, '')) { customerId = cust.id; break; }
-            }
+            if (phone && cust.phone && cust.phone.replace(/[^0-9]/g, '') === phone.replace(/[^0-9]/g, '')) { customerId = cust.id; break; }
           }
         }
-
-        const inqId = sub._id || sub.id || Math.random().toString(36).substr(2, 9);
-        const existing = await sql`SELECT status FROM inquiries WHERE id = ${inqId}`;
-        const preservedStatus = existing.length > 0 ? existing[0].status : 'new';
-
-        await sql`INSERT INTO inquiries (id, customer_id, name, phone, email, subject, message, source, status, created_at)
-                  VALUES (${inqId}, ${customerId}, ${name}, ${phone}, ${email}, ${subject}, ${message}, ${'wix_form'}, ${preservedStatus}, ${sub._createdDate || sub.createdDate || sub.submittedDate || new Date().toISOString()})
-                  ON CONFLICT (id) DO UPDATE SET customer_id = EXCLUDED.customer_id, name = EXCLUDED.name, phone = EXCLUDED.phone, email = EXCLUDED.email, subject = EXCLUDED.subject, message = EXCLUDED.message`;
-
-        if (customerId) {
-          await sql`UPDATE customers SET inquiry_ids = array_append(inquiry_ids, ${inqId}) WHERE id = ${customerId} AND NOT (${inqId} = ANY(inquiry_ids))`;
-        }
+        return { id: sub._id || sub.id || Math.random().toString(36).substr(2, 9), customerId, name, phone, email, subject, message, createdAt: sub._createdDate || sub.createdDate || sub.submittedDate || new Date().toISOString() };
+      });
+      for (let i = 0; i < inquiries.length; i += BATCH) {
+        const batch = inquiries.slice(i, i + BATCH);
+        await Promise.all(batch.map(inq =>
+          sql`INSERT INTO inquiries (id, customer_id, name, phone, email, subject, message, source, status, created_at)
+              VALUES (${inq.id}, ${inq.customerId}, ${inq.name}, ${inq.phone}, ${inq.email}, ${inq.subject}, ${inq.message}, ${'wix_form'}, ${'new'}, ${inq.createdAt})
+              ON CONFLICT (id) DO UPDATE SET customer_id = EXCLUDED.customer_id, name = EXCLUDED.name, phone = EXCLUDED.phone, email = EXCLUDED.email, subject = EXCLUDED.subject, message = EXCLUDED.message`
+        ));
       }
       await addLog('info', `${wixFormSubmissions.length} פניות מטפסים עובדו.`);
     }
 
-    const contactOnlyCount = Array.from(customerMap.values()).filter((c: any) => c.tags.includes('contact_only')).length;
     const subscriberCount = Array.from(customerMap.values()).filter((c: any) => c.tags.includes('subscriber')).length;
-    await addLog('success', `סנכרון מלא הושלם! ${Object.keys(contactsMap).length} אנשי קשר → ${customerMap.size} לקוחות (${subscriberCount} מנויים, ${contactOnlyCount} אנשי קשר בלבד). ${allOrders.length} הזמנות מנויים${ecomOrders.length > 0 ? ` + ${ecomOrders.length} הזמנות חנות` : ''}.`);
+    await addLog('success', `סנכרון מלא הושלם! ${wixLeads.length} מנויים, ${customersToSave.length} לקוחות נשמרו (${subscriberCount} מנויים). ${allOrders.length} הזמנות מנויים${ecomOrders.length > 0 ? ` + ${ecomOrders.length} הזמנות חנות` : ''}.`);
 
     return res.json({
       ok: true,
