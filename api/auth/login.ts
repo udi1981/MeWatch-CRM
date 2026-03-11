@@ -8,10 +8,11 @@ const secret = new TextEncoder().encode(process.env.JWT_SECRET || 'dev-secret-ch
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-  const { email } = req.body;
-  if (!email) return res.status(400).json({ error: 'Email required' });
+  const { email: rawEmail } = req.body || {};
+  if (!rawEmail) return res.status(400).json({ error: 'Email required' });
+  const email = rawEmail.trim().toLowerCase();
 
-  const rows = await sql`SELECT * FROM users WHERE email = ${email}`;
+  const rows = await sql`SELECT * FROM users WHERE LOWER(email) = ${email}`;
   if (rows.length === 0) return res.status(401).json({ error: 'User not found' });
 
   const user = rows[0];
