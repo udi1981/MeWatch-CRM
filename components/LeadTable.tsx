@@ -347,6 +347,15 @@ const LeadTable: React.FC<LeadTableProps> = ({ leads, statuses, columns, allColu
                         >
                           <WhatsAppIcon /> WhatsApp
                         </a>
+                        {lead.email && (
+                          <a
+                            href={`mailto:${lead.email}`}
+                            onClick={e => e.stopPropagation()}
+                            className="flex-1 flex items-center justify-center gap-1 bg-purple-500 text-white text-[11px] font-bold py-2 rounded-xl active:bg-purple-600"
+                          >
+                            <EmailIcon /> אימייל
+                          </a>
+                        )}
                         <button
                           onClick={(e) => { e.stopPropagation(); onLeadClick(lead.id); }}
                           className="flex-1 flex items-center justify-center gap-1 bg-gray-200 text-gray-700 text-[11px] font-bold py-2 rounded-xl active:bg-gray-300"
@@ -424,7 +433,7 @@ const LeadTable: React.FC<LeadTableProps> = ({ leads, statuses, columns, allColu
               <th onClick={() => handleSort('phone')} className="px-1 py-1 text-[11px] font-bold text-gray-600 bg-gray-50 cursor-pointer hover:bg-gray-100 select-none whitespace-nowrap">
                 <div className="flex items-center"><SortIndicator columnId="phone" />טלפון</div>
               </th>
-              <th className="px-0.5 py-1 text-[11px] font-bold text-gray-600 bg-gray-50 whitespace-nowrap">חייג</th>
+              <th className="px-0.5 py-1 text-[11px] font-bold text-gray-600 bg-gray-50 whitespace-nowrap">פעולות</th>
               <th onClick={() => handleSort('status')} className="px-1 py-1 text-[11px] font-bold text-gray-600 bg-gray-50 cursor-pointer hover:bg-gray-100 select-none whitespace-nowrap">
                 <div className="flex items-center"><SortIndicator columnId="status" />סטטוס</div>
               </th>
@@ -473,9 +482,19 @@ const LeadTable: React.FC<LeadTableProps> = ({ leads, statuses, columns, allColu
                       </div>
                     </td>
                     <td className="px-0.5 py-0.5" onClick={e => e.stopPropagation()}>
-                      <a href={`tel:${lead.phone}`} className="inline-flex items-center gap-0.5 text-blue-600 hover:text-blue-800 text-[10px] border border-blue-200 rounded-md px-1 py-0.5 bg-blue-50/50">
-                        <PhoneIcon /> חייג
-                      </a>
+                      <div className="flex items-center gap-0.5">
+                        <a href={`tel:${lead.phone}`} className="inline-flex items-center gap-0.5 text-blue-600 hover:text-blue-800 text-[10px] border border-blue-200 rounded-md px-1 py-0.5 bg-blue-50/50" title="חייג">
+                          <PhoneIcon />
+                        </a>
+                        <a href={getWhatsAppUrl(lead.phone)} target="_blank" rel="noopener noreferrer" className="inline-flex items-center text-green-600 hover:text-green-800 text-[10px] border border-green-200 rounded-md px-1 py-0.5 bg-green-50/50" title="WhatsApp">
+                          <WhatsAppIcon />
+                        </a>
+                        {lead.email && (
+                          <a href={`mailto:${lead.email}`} className="inline-flex items-center text-purple-600 hover:text-purple-800 text-[10px] border border-purple-200 rounded-md px-1 py-0.5 bg-purple-50/50" title={lead.email}>
+                            <EmailIcon />
+                          </a>
+                        )}
+                      </div>
                     </td>
                     <td className="px-0.5 py-0.5" onClick={e => e.stopPropagation()}>
                       <select value={lead.statusId} onChange={e => onStatusChange(lead.id, e.target.value)} className={`text-[10px] font-bold text-white px-1.5 py-0.5 rounded-full cursor-pointer border-none appearance-none text-center shadow-sm ${status.color}`}>
@@ -574,6 +593,12 @@ const TrashIcon = () => (
 const ExpandIcon = () => (
   <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
+  </svg>
+);
+
+const EmailIcon = () => (
+  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
   </svg>
 );
 

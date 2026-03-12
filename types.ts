@@ -108,6 +108,25 @@ export interface PnLEntry {
   invoiceId?: string;
 }
 
+export interface Campaign {
+  id: string;
+  title: string;
+  subject: string;
+  content_html: string;
+  image_url?: string;
+  coupon_code?: string;
+  coupon_expiry?: string;
+  cta_text?: string;
+  cta_url?: string;
+  channel: 'email' | 'whatsapp' | 'sms';
+  status: 'draft' | 'scheduled' | 'sending' | 'sent';
+  recipient_filter: Record<string, any>;
+  recipient_count: number;
+  sent_count: number;
+  created_at: string;
+  sent_at?: string;
+}
+
 export interface AppState {
   leads: Lead[];
   customers: Customer[];

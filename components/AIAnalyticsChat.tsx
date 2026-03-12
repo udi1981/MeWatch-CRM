@@ -26,9 +26,23 @@ const QUICK_QUESTIONS = [
   'כמה הכנסות מהחנות?',
   'מנויים שצריך להתקשר אליהם',
   'לקוחות עם תשלום נכשל',
+  'כמה מתשלום נכשל חידשו מנוי?',
   'אחוז ביטולים לפי סיבה',
   'לקוחות ללא טלפון',
 ];
+
+/** Check if a lead had payment issues but then renewed (active subscription) */
+const hasRenewed = (lead: Lead): boolean | null => {
+  const lastPayment = String(lead.dynamicData?.lastPaymentStatus || '').toLowerCase();
+  const wixStatus = String(lead.dynamicData?.wixStatus || '');
+  const hasActive = String(lead.dynamicData?.hasActiveSubscription || '');
+  const reason = String(lead.dynamicData?.cancellationReason || '');
+  // Only relevant for payment-failed or canceled leads
+  if (lastPayment !== 'failed' && lastPayment !== 'נכשל' && wixStatus !== 'CANCELED' && reason !== 'תשלום נכשל') return null;
+  // Renewed = now has active subscription
+  if (hasActive === 'כן' || wixStatus === 'ACTIVE') return true;
+  return false;
+};
 
 const buildDataSummary = (leads: Lead[]): string => {
   const total = leads.length;
@@ -56,13 +70,30 @@ const buildDataSummary = (leads: Lead[]): string => {
     if (ws) byWixStatus[ws] = (byWixStatus[ws] || 0) + 1;
   }
 
+  // Renewal analysis: payment-failed leads that renewed vs didn't
+  const paymentFailedLeads = leads.filter(l => {
+    const reason = (l.dynamicData?.cancellationReason || '').toString();
+    const lastPayment = String(l.dynamicData?.lastPaymentStatus || '').toLowerCase();
+    return reason === 'תשלום נכשל' || lastPayment === 'failed' || lastPayment === 'נכשל';
+  });
+  const renewedLeads = paymentFailedLeads.filter(l => hasRenewed(l) === true);
+  const notRenewedLeads = paymentFailedLeads.filter(l => hasRenewed(l) === false);
+
+  // Canceled leads that renewed
+  const canceledLeads = leads.filter(l => {
+    const wixStatus = String(l.dynamicData?.wixStatus || '');
+    const reason = (l.dynamicData?.cancellationReason || '').toString();
+    return wixStatus === 'CANCELED' || reason.includes('בוטל');
+  });
+  const canceledThenRenewed = canceledLeads.filter(l => hasRenewed(l) === true);
+
   // Build sample lists for common queries (limit to 50 per category)
   const paymentFailed = leads.filter(l => (l.dynamicData?.cancellationReason || '').toString() === 'תשלום נכשל').slice(0, 50);
   const canceledByCustomer = leads.filter(l => (l.dynamicData?.cancellationReason || '').toString() === 'בוטל ע"י הלקוח').slice(0, 50);
   const canceledByCompany = leads.filter(l => (l.dynamicData?.cancellationReason || '').toString() === 'בוטל ע"י החברה').slice(0, 50);
   const noPhone = leads.filter(l => !l.phone).slice(0, 50);
 
-  const formatLead = (l: Lead) => `${l.name} | ${l.phone || 'אין טלפון'} | ${l.email || 'אין'} | ${l.dynamicData?.planName || ''} | ₪${l.dynamicData?.totalPaid || 0} | ${l.dynamicData?.cancellationReason || 'פעיל'}`;
+  const formatLead = (l: Lead) => `${l.name} | ${l.phone || 'אין טלפון'} | ${l.email || 'אין'} | ${l.dynamicData?.planName || ''} | ₪${l.dynamicData?.totalPaid || 0} | ${l.dynamicData?.cancellationReason || 'פעיל'} | חידוש: ${hasRenewed(l) === true ? 'כן' : hasRenewed(l) === false ? 'לא' : '-'}`;
 
   const revenueByPlanStr = fm.revenueByPlan.map(([plan, data]) =>
     `  ${plan}: הכנסות ₪${data.revenue.toLocaleString()}, ${data.active} פעילים מתוך ${data.count} לקוחות`
@@ -105,6 +136,14 @@ const buildDataSummary = (leads: Lead[]): string => {
 אחוז נטישה (churn): ${fm.churnRate}%
 אחוז שימור (retention): ${fm.retentionRate}%
 
+--- נתוני חידוש מנויים (RENEWAL) ---
+סה"כ לקוחות עם תשלום נכשל: ${paymentFailedLeads.length}
+מתוכם חידשו מנוי (renewed): ${renewedLeads.length}
+מתוכם לא חידשו (need call): ${notRenewedLeads.length}
+אחוז חידוש מתוך תשלום נכשל: ${paymentFailedLeads.length > 0 ? Math.round((renewedLeads.length / paymentFailedLeads.length) * 100) : 0}%
+סה"כ לקוחות שביטלו: ${canceledLeads.length}
+מתוכם חזרו וחידשו: ${canceledThenRenewed.length}
+
 --- הכנסות לפי מנוי ---
 ${revenueByPlanStr || '  אין נתונים'}
 
@@ -129,8 +168,11 @@ ${JSON.stringify(byPlan)}
 --- חלוקה לפי סטטוס CRM ---
 ${JSON.stringify(byStatus)}
 
---- דוגמאות לקוחות - תשלום נכשל (${paymentFailed.length} מתוך ${byReason['תשלום נכשל'] || 0}) ---
-${paymentFailed.map(formatLead).join('\n')}
+--- דוגמאות - תשלום נכשל שחידשו (${renewedLeads.length}) ---
+${renewedLeads.slice(0, 30).map(formatLead).join('\n') || 'אין'}
+
+--- דוגמאות - תשלום נכשל שלא חידשו (${notRenewedLeads.length}) ---
+${notRenewedLeads.slice(0, 30).map(formatLead).join('\n') || 'אין'}
 
 --- דוגמאות - בוטל ע"י הלקוח (${canceledByCustomer.length} מתוך ${byReason['בוטל ע"י הלקוח'] || 0}) ---
 ${canceledByCustomer.map(formatLead).join('\n')}
@@ -174,22 +216,52 @@ const AIAnalyticsChat: React.FC<AIAnalyticsChatProps> = ({ leads, onClose }) => 
       const dataSummary = buildDataSummary(leads);
 
       const systemInstruction = `אתה אנליסט עסקי (Business Analyst) מומחה של מערכת CRM לניהול מנויים ומכירות. ענה תמיד בעברית.
-התפקיד שלך: לנתח נתונים כספיים, נטישה, ביצועי מנויים, בריאות תשלומים, ולתת תובנות עסקיות.
-ענה בפורמט JSON: {"answer": "...", "metrics": [{"label": "...", "value": "..."}], "table": {"headers": [...], "rows": [...]}}`;
+התפקיד שלך: לנתח נתונים כספיים, נטישה, ביצועי מנויים, בריאות תשלומים, חידושים, ולתת תובנות עסקיות.
+
+חשוב: בנתונים יש סעיף "נתוני חידוש מנויים (RENEWAL)" שמראה:
+- כמה לקוחות עם תשלום נכשל חידשו מנוי (renewed = יש להם מנוי פעיל כרגע)
+- כמה לא חידשו (צריך להתקשר אליהם)
+- גם דוגמאות של שמות ופרטים
+השתמש בנתונים האלה כשנשאלת על חידושים, renewals, או תשלום נכשל.
+
+ענה בפורמט JSON בלבד (ללא markdown, ללא \`\`\`):
+{"answer": "...", "metrics": [{"label": "...", "value": "..."}], "table": {"headers": [...], "rows": [...]}}
+אם אין צורך בטבלה או מטריקות, החזר מערכים ריקים.`;
 
       const prompt = `${dataSummary}\n\nהשאלה של המשתמש: "${text.trim()}"`;
       const response = await api.aiAnalytics(prompt, systemInstruction);
 
-      // Sanitize control characters that Gemini sometimes includes in JSON strings
-      const raw = (response.text || '{}').replace(/[\x00-\x1F\x7F]/g, (ch: string) => ch === '\n' || ch === '\r' || ch === '\t' ? ch : '');
-      const parsed = JSON.parse(raw);
+      // Extract JSON from response — strip markdown code blocks and control chars
+      let raw = (response.text || '{}');
+      // Remove markdown code block wrappers (```json ... ``` or ``` ... ```)
+      raw = raw.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?```\s*$/i, '');
+      // Remove control characters except newline/tab
+      raw = raw.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
+      raw = raw.trim();
+
+      let parsed: any;
+      try {
+        parsed = JSON.parse(raw);
+      } catch (parseErr) {
+        // Fallback: try to find JSON object in the text
+        const jsonMatch = raw.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          try {
+            parsed = JSON.parse(jsonMatch[0]);
+          } catch {
+            parsed = { answer: raw || 'לא הצלחתי לעבד את השאלה.' };
+          }
+        } else {
+          parsed = { answer: raw || 'לא הצלחתי לעבד את השאלה.' };
+        }
+      }
 
       const aiMsg: Message = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
         text: parsed.answer || 'לא הצלחתי לעבד את השאלה.',
-        table: parsed.table,
-        metrics: parsed.metrics,
+        table: parsed.table?.headers?.length ? parsed.table : undefined,
+        metrics: parsed.metrics?.length ? parsed.metrics : undefined,
       };
       setMessages(prev => [...prev, aiMsg]);
     } catch (err: any) {
@@ -197,7 +269,7 @@ const AIAnalyticsChat: React.FC<AIAnalyticsChatProps> = ({ leads, onClose }) => 
       const errorMsg: Message = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
-        text: `שגיאה: ${err.message || 'לא הצלחתי לעבד את השאלה'}`,
+        text: `😔 לא הצלחתי לעבד את השאלה הזו. נסה לנסח אותה אחרת או לשאול שאלה פשוטה יותר.\n\n(${err.message || 'שגיאת תקשורת'})`,
       };
       setMessages(prev => [...prev, errorMsg]);
     } finally {

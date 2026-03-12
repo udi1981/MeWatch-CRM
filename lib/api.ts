@@ -27,8 +27,20 @@ const api = {
   addLog: (level: string, message: string, details?: string) => fetch('/api/logs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ level, message, details }) }),
   clearLogs: () => fetch('/api/logs', { method: 'DELETE' }).then(json),
 
+  // Dashboard
+  getDashboardData: () => fetch('/api/dashboard').then(json),
+
   // Wix sync
   syncWix: () => fetch('/api/wix/sync', { method: 'POST' }).then(json),
+
+  // Email
+  sendEmail: (to: string, subject: string, html: string) => fetch('/api/email/send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to, subject, html }) }).then(json),
+  sendCampaign: (data: any) => fetch('/api/email/campaign', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(json),
+
+  // Campaigns
+  getCampaigns: () => fetch('/api/campaigns').then(json),
+  saveCampaign: (data: any) => fetch('/api/campaigns', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(json),
+  deleteCampaign: (id: string) => fetch('/api/campaigns', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) }).then(json),
 
   // AI
   aiAnalytics: (prompt: string, systemInstruction: string) => fetch('/api/ai', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, systemInstruction, type: 'analytics' }) }).then(json),
