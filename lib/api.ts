@@ -4,8 +4,8 @@ const json = (r: Response) => r.ok ? r.json() : r.json().then(e => { throw new E
 
 const api = {
   // Auth
-  login: (email: string, password: string, rememberMe = true) => fetch('/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password, rememberMe }) }).then(json),
-  me: () => fetch('/api/auth/me').then(r => r.ok ? r.json() : null),
+  login: (email: string, password: string, rememberMe = true) => fetch('/api/auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password, rememberMe }) }).then(json),
+  me: () => fetch('/api/auth').then(r => r.ok ? r.json() : null),
 
   // Leads
   getLeads: (): Promise<Lead[]> => fetch('/api/leads').then(json),
@@ -34,8 +34,8 @@ const api = {
   syncWix: () => fetch('/api/wix/sync', { method: 'POST' }).then(json),
 
   // Email
-  sendEmail: (to: string, subject: string, html: string) => fetch('/api/email/send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to, subject, html }) }).then(json),
-  sendCampaign: (data: any) => fetch('/api/email/campaign', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(json),
+  sendEmail: (to: string, subject: string, html: string) => fetch('/api/email', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to, subject, html }) }).then(json),
+  sendCampaign: (data: any) => fetch('/api/email', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...data, action: 'campaign' }) }).then(json),
 
   // Campaigns
   getCampaigns: () => fetch('/api/campaigns').then(json),

@@ -30,7 +30,6 @@ function buildEmailHTML(options: {
   body { margin:0; padding:0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f4f4f5; direction: rtl; }
   .container { max-width: 600px; margin: 0 auto; background: #fff; }
   .header { background: linear-gradient(135deg, #1e40af, #7c3aed); padding: 24px; text-align: center; }
-  .header img { height: 40px; }
   .header h1 { color: #fff; font-size: 20px; margin: 12px 0 0; }
   .hero-img { width: 100%; max-height: 300px; object-fit: cover; }
   .content { padding: 32px 24px; font-size: 16px; line-height: 1.7; color: #374151; }
@@ -79,80 +78,99 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const apiKey = process.env.RESEND_API_KEY;
   if (!apiKey) return res.status(500).json({ error: 'RESEND_API_KEY not configured' });
 
-  const { campaignId, subject, contentHtml, imageUrl, couponCode, couponExpiry, ctaText, ctaUrl, recipients, testEmail } = req.body;
-  if (!subject || !contentHtml) return res.status(400).json({ error: 'subject and contentHtml required' });
-
   const resend = new Resend(apiKey);
   const fromEmail = process.env.RESEND_FROM_EMAIL || 'noreply@mewatch.co.il';
-  const html = buildEmailHTML({ subject, contentHtml, imageUrl, couponCode, couponExpiry, ctaText, ctaUrl });
 
-  // Test mode: send to single email
-  if (testEmail) {
+  // Determine action: "campaign" for bulk/test campaign, default for single email
+  const { action } = req.body;
+
+  // ============ CAMPAIGN MODE ============
+  if (action === 'campaign') {
+    const { campaignId, subject, contentHtml, imageUrl, couponCode, couponExpiry, ctaText, ctaUrl, recipients, testEmail } = req.body;
+    if (!subject || !contentHtml) return res.status(400).json({ error: 'subject and contentHtml required' });
+
+    const html = buildEmailHTML({ subject, contentHtml, imageUrl, couponCode, couponExpiry, ctaText, ctaUrl });
+
+    // Test mode
+    if (testEmail) {
+      try {
+        const { data, error } = await resend.emails.send({
+          from: `MeWatch <${fromEmail}>`,
+          to: [testEmail],
+          subject: `[בדיקה] ${subject}`,
+          html,
+        });
+        if (error) return res.status(400).json({ error: error.message });
+        return res.json({ ok: true, testSent: true, id: data?.id });
+      } catch (error: any) {
+        return res.status(500).json({ error: error.message });
+      }
+    }
+
+    // Bulk send
+    if (!recipients || !Array.isArray(recipients) || recipients.length === 0) {
+      return res.status(400).json({ error: 'recipients array required for bulk send' });
+    }
+
     try {
-      const { data, error } = await resend.emails.send({
-        from: `MeWatch <${fromEmail}>`,
-        to: [testEmail],
-        subject: `[בדיקה] ${subject}`,
-        html,
-      });
-      if (error) return res.status(400).json({ error: error.message });
-      return res.json({ ok: true, testSent: true, id: data?.id });
+      if (campaignId) {
+        await sql`UPDATE campaigns SET status = 'sending', recipient_count = ${recipients.length} WHERE id = ${campaignId}`;
+      }
+
+      let sentCount = 0;
+      const errors: string[] = [];
+      const batchSize = 50;
+
+      for (let i = 0; i < recipients.length; i += batchSize) {
+        const batch = recipients.slice(i, i + batchSize);
+        const promises = batch.map(async (email: string) => {
+          try {
+            await resend.emails.send({ from: `MeWatch <${fromEmail}>`, to: [email], subject, html });
+            sentCount++;
+          } catch (err: any) {
+            errors.push(`${email}: ${err.message}`);
+          }
+        });
+        await Promise.all(promises);
+        if (i + batchSize < recipients.length) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+      }
+
+      if (campaignId) {
+        await sql`UPDATE campaigns SET status = 'sent', sent_count = ${sentCount}, sent_at = NOW() WHERE id = ${campaignId}`;
+      }
+
+      await sql`INSERT INTO logs (level, message, details) VALUES ('info', ${'Campaign sent: ' + sentCount + '/' + recipients.length + ' emails'}, ${campaignId || 'no-id'})`;
+
+      return res.json({ ok: true, sentCount, totalRecipients: recipients.length, errors: errors.length > 0 ? errors.slice(0, 10) : undefined });
     } catch (error: any) {
+      if (campaignId) {
+        await sql`UPDATE campaigns SET status = 'draft' WHERE id = ${campaignId}`.catch(() => {});
+      }
       return res.status(500).json({ error: error.message });
     }
   }
 
-  // Bulk send mode
-  if (!recipients || !Array.isArray(recipients) || recipients.length === 0) {
-    return res.status(400).json({ error: 'recipients array required for bulk send' });
-  }
+  // ============ SINGLE EMAIL MODE ============
+  const { to, subject, html, text } = req.body;
+  if (!to || !subject) return res.status(400).json({ error: 'to and subject required' });
 
   try {
-    // Update campaign status to sending
-    if (campaignId) {
-      await sql`UPDATE campaigns SET status = 'sending', recipient_count = ${recipients.length} WHERE id = ${campaignId}`;
-    }
+    const { data, error } = await resend.emails.send({
+      from: `MeWatch <${fromEmail}>`,
+      to: Array.isArray(to) ? to : [to],
+      subject,
+      html: html || undefined,
+      text: text || undefined,
+    });
 
-    let sentCount = 0;
-    const batchSize = 50;
-    const errors: string[] = [];
+    if (error) return res.status(400).json({ error: error.message });
 
-    // Send in batches of 50
-    for (let i = 0; i < recipients.length; i += batchSize) {
-      const batch = recipients.slice(i, i + batchSize);
-      const promises = batch.map(async (email: string) => {
-        try {
-          await resend.emails.send({
-            from: `MeWatch <${fromEmail}>`,
-            to: [email],
-            subject,
-            html,
-          });
-          sentCount++;
-        } catch (err: any) {
-          errors.push(`${email}: ${err.message}`);
-        }
-      });
-      await Promise.all(promises);
-      // Small delay between batches
-      if (i + batchSize < recipients.length) {
-        await new Promise(resolve => setTimeout(resolve, 1000));
-      }
-    }
+    await sql`INSERT INTO logs (level, message, details) VALUES ('info', ${'Email sent to ' + (Array.isArray(to) ? to.join(', ') : to)}, ${subject})`;
 
-    // Update campaign status
-    if (campaignId) {
-      await sql`UPDATE campaigns SET status = 'sent', sent_count = ${sentCount}, sent_at = NOW() WHERE id = ${campaignId}`;
-    }
-
-    // Log
-    await sql`INSERT INTO logs (level, message, details) VALUES ('info', ${'Campaign sent: ' + sentCount + '/' + recipients.length + ' emails'}, ${campaignId || 'no-id'})`;
-
-    return res.json({ ok: true, sentCount, totalRecipients: recipients.length, errors: errors.length > 0 ? errors.slice(0, 10) : undefined });
+    return res.json({ ok: true, id: data?.id });
   } catch (error: any) {
-    if (campaignId) {
-      await sql`UPDATE campaigns SET status = 'draft' WHERE id = ${campaignId}`.catch(() => {});
-    }
     return res.status(500).json({ error: error.message });
   }
 }
