@@ -79,7 +79,7 @@ async function getAISummary() {
       SELECT
         dynamic_data->>'wixStatus' as status,
         COUNT(*) as count,
-        COALESCE(SUM((dynamic_data->>'totalPaid')::numeric), 0) as revenue
+        COALESCE(SUM(NULLIF(REPLACE(REPLACE(dynamic_data->>'totalPaid', '₪', ''), ',', ''), '')::numeric), 0) as revenue
       FROM leads
       WHERE dynamic_data->>'wixStatus' IS NOT NULL AND dynamic_data->>'wixStatus' != ''
       GROUP BY dynamic_data->>'wixStatus'
@@ -91,7 +91,7 @@ async function getAISummary() {
         dynamic_data->>'planName' as plan,
         COUNT(*) as total,
         COUNT(*) FILTER (WHERE dynamic_data->>'hasActiveSubscription' = 'כן' OR dynamic_data->>'wixStatus' = 'ACTIVE') as active,
-        COALESCE(SUM((dynamic_data->>'totalPaid')::numeric), 0) as revenue
+        COALESCE(SUM(NULLIF(REPLACE(REPLACE(dynamic_data->>'totalPaid', '₪', ''), ',', ''), '')::numeric), 0) as revenue
       FROM leads
       WHERE dynamic_data->>'planName' IS NOT NULL AND dynamic_data->>'planName' != ''
       GROUP BY dynamic_data->>'planName'
@@ -107,12 +107,12 @@ async function getAISummary() {
       GROUP BY dynamic_data->>'cancellationReason'
       ORDER BY count DESC
     `,
-    // 7b. Cancellation by month (using cancellationDate DD.MM.YYYY)
+    // 7b. Cancellation by month (using cancellationDate D.M.YYYY or DD.MM.YYYY)
     sql`
       SELECT
         CASE
-          WHEN dynamic_data->>'cancellationDate' ~ '^\d{2}\.\d{2}\.\d{4}$'
-          THEN substring(dynamic_data->>'cancellationDate' from 4 for 2) || '/' || substring(dynamic_data->>'cancellationDate' from 7 for 4)
+          WHEN dynamic_data->>'cancellationDate' ~ '^\d{1,2}\.\d{1,2}\.\d{4}$'
+          THEN LPAD(split_part(dynamic_data->>'cancellationDate', '.', 2), 2, '0') || '/' || split_part(dynamic_data->>'cancellationDate', '.', 3)
           ELSE 'לא ידוע'
         END as month_year,
         COUNT(*) as count,
@@ -178,10 +178,10 @@ async function getAISummary() {
     // 12. Ecommerce Summary
     sql`
       SELECT
-        COALESCE(SUM((dynamic_data->>'ecomSpent')::numeric), 0) as total_ecom_revenue,
-        COUNT(*) FILTER (WHERE (dynamic_data->>'ecomSpent')::numeric > 0) as ecom_customers
+        COALESCE(SUM(NULLIF(REPLACE(REPLACE(dynamic_data->>'ecomTotalSpent', '₪', ''), ',', ''), '')::numeric), 0) as total_ecom_revenue,
+        COUNT(*) FILTER (WHERE NULLIF(REPLACE(REPLACE(dynamic_data->>'ecomTotalSpent', '₪', ''), ',', ''), '') IS NOT NULL) as ecom_customers
       FROM leads
-      WHERE dynamic_data->>'ecomSpent' IS NOT NULL AND dynamic_data->>'ecomSpent' != '' AND dynamic_data->>'ecomSpent' != '0'
+      WHERE dynamic_data->>'ecomTotalSpent' IS NOT NULL AND dynamic_data->>'ecomTotalSpent' != ''
     `,
     // 13. Last Sync timestamp
     sql`SELECT MAX(created_at) as last_sync FROM leads`,
