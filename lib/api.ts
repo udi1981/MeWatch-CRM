@@ -29,6 +29,7 @@ const api = {
 
   // Dashboard
   getDashboardData: () => fetch('/api/dashboard').then(json),
+  getAnalyticsSummary: () => fetch('/api/dashboard?mode=ai-summary').then(json),
 
   // Wix sync
   syncWix: () => fetch('/api/wix/sync', { method: 'POST' }).then(json),

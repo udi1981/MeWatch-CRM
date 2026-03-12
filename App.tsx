@@ -807,7 +807,6 @@ const App: React.FC = () => {
 
       {isAnalyticsChatOpen && (
         <AIAnalyticsChat
-          leads={leads}
           onClose={() => setIsAnalyticsChatOpen(false)}
         />
       )}

@@ -166,13 +166,28 @@ const LeadTable: React.FC<LeadTableProps> = ({ leads, statuses, columns, allColu
             {leads.length} מנויים
             {matchingOrdersCount ? <span className="text-blue-600 font-bold mr-1"> ({matchingOrdersCount})</span> : null}
           </span>
-          <div className="flex items-center gap-2">
-            {/* Sort button */}
-            <button
-              onClick={() => handleSort(sortConfig.key === 'startDate' ? 'name' : 'startDate')}
-              className="text-[10px] text-gray-500 bg-gray-100 px-2 py-1 rounded-lg"
+          <div className="flex items-center gap-1.5">
+            {/* Sort dropdown — all columns */}
+            <select
+              value={sortConfig.key}
+              onChange={(e) => setSortConfig({ key: e.target.value, direction: sortConfig.direction })}
+              className="text-[10px] text-gray-600 bg-gray-100 px-2 py-1 rounded-lg border-none outline-none max-w-[120px]"
             >
-              {sortConfig.key === 'name' ? 'א-ת' : 'תאריך'} {sortConfig.direction === 'asc' ? '\u2191' : '\u2193'}
+              <option value="name">שם</option>
+              <option value="phone">טלפון</option>
+              <option value="status">סטטוס</option>
+              <option value="renewed">חידוש</option>
+              {visibleColumns.map(colId => {
+                const col = allColumns.find(c => c.id === colId);
+                if (!col || ['name','phone','status','renewed'].includes(colId)) return null;
+                return <option key={colId} value={colId}>{col.label}</option>;
+              })}
+            </select>
+            <button
+              onClick={() => setSortConfig(prev => ({ ...prev, direction: prev.direction === 'asc' ? 'desc' : 'asc' }))}
+              className="text-[10px] text-gray-500 bg-gray-100 px-2 py-1 rounded-lg font-bold"
+            >
+              {sortConfig.direction === 'asc' ? '▲' : '▼'}
             </button>
           </div>
         </div>
