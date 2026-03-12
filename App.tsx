@@ -717,7 +717,7 @@ const App: React.FC = () => {
                 onOpenLead={(id) => { setSelectedLeadId(id); setActiveTab('leads'); }}
               />
             ) : activeTab === 'customers' ? (
-              <CustomersView customers={customers} leads={leads} onOpenLead={(id) => { setSelectedLeadId(id); setActiveTab('leads'); }} />
+              <CustomersView customers={customers} leads={leads} onOpenLead={(id) => { setSelectedLeadId(id); setActiveTab('leads'); }} onRefreshCustomers={() => api.getCustomers().then(setCustomers).catch(() => {})} />
             ) : activeTab === 'inquiries' ? (
               <InquiriesView
                 inquiries={inquiries}

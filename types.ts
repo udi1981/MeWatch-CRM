@@ -75,6 +75,9 @@ export interface Customer {
   ecomSpent?: number;
   lastActivity?: string;
   wixMemberStatus?: string;
+  emailUnsubscribed?: boolean;
+  unsubscribedAt?: string;
+  unsubscribeSource?: string;
 }
 
 export interface Inquiry {

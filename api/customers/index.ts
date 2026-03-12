@@ -30,14 +30,31 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       ecomSpent: r.ecom_spent ? parseFloat(r.ecom_spent) : 0,
       lastActivity: r.last_activity,
       wixMemberStatus: r.wix_member_status,
+      emailUnsubscribed: r.email_unsubscribed || false,
+      unsubscribedAt: r.unsubscribed_at,
+      unsubscribeSource: r.unsubscribe_source,
     })));
+  }
+
+  if (req.method === 'PUT') {
+    const { id, emailUnsubscribed } = req.body;
+    if (!id) return res.status(400).json({ error: 'id required' });
+
+    if (emailUnsubscribed === true) {
+      await sql`UPDATE customers SET email_unsubscribed = true, unsubscribed_at = NOW(), unsubscribe_source = 'manual' WHERE id = ${id}`;
+    } else {
+      await sql`UPDATE customers SET email_unsubscribed = false, unsubscribed_at = NULL, unsubscribe_source = NULL WHERE id = ${id}`;
+    }
+
+    await sql`INSERT INTO logs (level, message, details) VALUES ('info', ${emailUnsubscribed ? 'Manual unsubscribe' : 'Manual re-subscribe'}, ${id})`;
+    return res.json({ ok: true });
   }
 
   if (req.method === 'POST') {
     const { id, name, phone, email, source, createdAt, subscriptionIds, inquiryIds, tags, totalSpent, ecomSpent, lastActivity, wixMemberStatus } = req.body;
-    await sql`INSERT INTO customers (id, name, phone, email, source, created_at, subscription_ids, inquiry_ids, tags, total_spent, ecom_spent, last_activity, wix_member_status)
-              VALUES (${id}, ${name}, ${phone || ''}, ${email || null}, ${source || 'manual'}, ${createdAt || new Date().toISOString()}, ${subscriptionIds || []}, ${inquiryIds || []}, ${tags || []}, ${totalSpent || 0}, ${ecomSpent || 0}, ${lastActivity || null}, ${wixMemberStatus || null})
-              ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, phone = EXCLUDED.phone, email = EXCLUDED.email, source = EXCLUDED.source, subscription_ids = EXCLUDED.subscription_ids, inquiry_ids = EXCLUDED.inquiry_ids, tags = EXCLUDED.tags, total_spent = EXCLUDED.total_spent, ecom_spent = EXCLUDED.ecom_spent, last_activity = EXCLUDED.last_activity, wix_member_status = EXCLUDED.wix_member_status`;
+    await sql`INSERT INTO customers (id, name, phone, email, source, created_at, subscription_ids, inquiry_ids, tags, total_spent, ecom_spent, last_activity, wix_member_status, unsubscribe_token)
+              VALUES (${id}, ${name}, ${phone || ''}, ${email || null}, ${source || 'manual'}, ${createdAt || new Date().toISOString()}, ${subscriptionIds || []}, ${inquiryIds || []}, ${tags || []}, ${totalSpent || 0}, ${ecomSpent || 0}, ${lastActivity || null}, ${wixMemberStatus || null}, ${email ? require('crypto').randomBytes(16).toString('hex') : null})
+              ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, phone = EXCLUDED.phone, email = EXCLUDED.email, source = EXCLUDED.source, subscription_ids = EXCLUDED.subscription_ids, inquiry_ids = EXCLUDED.inquiry_ids, tags = EXCLUDED.tags, total_spent = EXCLUDED.total_spent, ecom_spent = EXCLUDED.ecom_spent, last_activity = EXCLUDED.last_activity, wix_member_status = EXCLUDED.wix_member_status, unsubscribe_token = COALESCE(customers.unsubscribe_token, EXCLUDED.unsubscribe_token)`;
     return res.json({ ok: true });
   }
 

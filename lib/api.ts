@@ -37,6 +37,9 @@ const api = {
   // Email
   sendEmail: (to: string, subject: string, html: string) => fetch('/api/email', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to, subject, html }) }).then(json),
   sendCampaign: (data: any) => fetch('/api/email', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...data, action: 'campaign' }) }).then(json),
+  sendTestCampaign: (data: any) => fetch('/api/email', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...data, action: 'preview' }) }).then(json),
+  getEmailPreview: (data: any) => fetch('/api/email', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...data, action: 'previewHtml' }) }).then(json),
+  toggleEmailSubscription: (id: string, emailUnsubscribed: boolean) => fetch('/api/customers', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, emailUnsubscribed }) }).then(json),
 
   // Campaigns
   getCampaigns: () => fetch('/api/campaigns').then(json),

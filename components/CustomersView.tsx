@@ -1,11 +1,13 @@
 
 import React, { useState, useMemo } from 'react';
 import { Customer, Lead } from '../types';
+import api from '../lib/api';
 
 interface CustomersViewProps {
   customers: Customer[];
   leads: Lead[];
   onOpenLead: (id: string) => void;
+  onRefreshCustomers?: () => void;
 }
 
 const SEGMENTS = [
@@ -20,7 +22,7 @@ const SEGMENTS = [
   { id: 'contact_only', label: 'אנשי קשר בלבד', color: 'gray' },
 ] as const;
 
-const CustomersView: React.FC<CustomersViewProps> = ({ customers, leads, onOpenLead }) => {
+const CustomersView: React.FC<CustomersViewProps> = ({ customers, leads, onOpenLead, onRefreshCustomers }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [activeSegment, setActiveSegment] = useState<string>('all');
   const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
@@ -243,6 +245,7 @@ const CustomersView: React.FC<CustomersViewProps> = ({ customers, leads, onOpenL
                 </th>
                 <th className="px-3 py-2.5 text-right font-medium">טלפון</th>
                 <th className="px-3 py-2.5 text-right font-medium">אימייל</th>
+                <th className="px-3 py-2.5 text-right font-medium text-center">דיוור</th>
                 <th className="px-3 py-2.5 text-right font-medium">תגיות</th>
                 <th className="px-3 py-2.5 text-right font-medium">מנויים</th>
                 <th className="px-3 py-2.5 text-right font-medium cursor-pointer hover:text-gray-700" onClick={() => toggleSort('totalSpent')}>
@@ -262,6 +265,17 @@ const CustomersView: React.FC<CustomersViewProps> = ({ customers, leads, onOpenL
                   <td className="px-3 py-2.5 font-medium text-gray-800">{customer.name}</td>
                   <td className="px-3 py-2.5 text-gray-600 font-mono text-xs" dir="ltr">{customer.phone || '—'}</td>
                   <td className="px-3 py-2.5 text-gray-600 text-xs max-w-[180px] truncate">{customer.email || '—'}</td>
+                  <td className="px-3 py-2.5 text-center">
+                    {customer.email ? (
+                      customer.emailUnsubscribed ? (
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-red-100 text-red-600">הוסר</span>
+                      ) : (
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-green-100 text-green-600">פעיל</span>
+                      )
+                    ) : (
+                      <span className="text-gray-300">—</span>
+                    )}
+                  </td>
                   <td className="px-3 py-2.5">
                     <div className="flex flex-wrap gap-1">
                       {(customer.tags || []).slice(0, 3).map(tag => (
@@ -321,6 +335,34 @@ const CustomersView: React.FC<CustomersViewProps> = ({ customers, leads, onOpenL
                   <span className="text-xs text-gray-400">ללא תגיות</span>
                 )}
               </div>
+
+              {/* Email Subscription Toggle */}
+              {selectedCustomer.email && (
+                <div className="flex items-center justify-between bg-gray-50 rounded-xl p-3">
+                  <div>
+                    <div className="text-sm font-medium text-gray-700">קבלת דיוור במייל</div>
+                    <div className="text-xs text-gray-400">
+                      {selectedCustomer.emailUnsubscribed
+                        ? `הוסר${selectedCustomer.unsubscribedAt ? ' ב-' + new Date(selectedCustomer.unsubscribedAt).toLocaleDateString('he-IL') : ''}${selectedCustomer.unsubscribeSource === 'link' ? ' (לחץ על הסרה)' : selectedCustomer.unsubscribeSource === 'manual' ? ' (ידני)' : ''}`
+                        : 'מקבל/ת הודעות שיווקיות'}
+                    </div>
+                  </div>
+                  <button
+                    onClick={async () => {
+                      const newVal = !selectedCustomer.emailUnsubscribed;
+                      await api.toggleEmailSubscription(selectedCustomer.id, newVal);
+                      onRefreshCustomers?.();
+                    }}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                      selectedCustomer.emailUnsubscribed
+                        ? 'bg-green-100 text-green-700 hover:bg-green-200'
+                        : 'bg-red-100 text-red-700 hover:bg-red-200'
+                    }`}
+                  >
+                    {selectedCustomer.emailUnsubscribed ? 'הפעל מחדש' : 'הסר מדיוור'}
+                  </button>
+                </div>
+              )}
 
               <div className="grid grid-cols-3 gap-3 text-center">
                 <div className="bg-blue-50 rounded-xl p-3">

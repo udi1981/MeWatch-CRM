@@ -30,6 +30,9 @@ const MarketingView: React.FC<MarketingViewProps> = ({ leads }) => {
   const [audienceFilter, setAudienceFilter] = useState<AudienceFilter>({ status: 'all', plan: 'all', hasEmail: true });
   const [sending, setSending] = useState(false);
   const [testSent, setTestSent] = useState(false);
+  const [testEmail, setTestEmail] = useState('udi1981@gmail.com');
+  const [showPreview, setShowPreview] = useState(false);
+  const [previewHtml, setPreviewHtml] = useState('');
 
   useEffect(() => {
     api.getCampaigns().then(setCampaigns).catch(() => {}).finally(() => setLoading(false));
@@ -106,15 +109,26 @@ const MarketingView: React.FC<MarketingViewProps> = ({ leads }) => {
   };
 
   const sendTest = async () => {
+    if (!testEmail) { alert('הזן כתובת אימייל לבדיקה'); return; }
     setTestSent(false);
     try {
-      await api.sendCampaign({
+      await api.sendTestCampaign({
         subject, contentHtml, imageUrl, couponCode, couponExpiry, ctaText, ctaUrl,
-        testEmail: 'udi1981@gmail.com',
+        previewEmail: testEmail,
       });
       setTestSent(true);
     } catch (err: any) {
       alert('שגיאה בשליחת בדיקה: ' + err.message);
+    }
+  };
+
+  const loadPreview = async () => {
+    try {
+      const result = await api.getEmailPreview({ subject, contentHtml, imageUrl, couponCode, couponExpiry, ctaText, ctaUrl });
+      setPreviewHtml(result.html);
+      setShowPreview(true);
+    } catch (err: any) {
+      alert('שגיאה בטעינת תצוגה מקדימה: ' + err.message);
     }
   };
 
@@ -129,7 +143,9 @@ const MarketingView: React.FC<MarketingViewProps> = ({ leads }) => {
         subject, contentHtml, imageUrl, couponCode, couponExpiry, ctaText, ctaUrl,
         recipients: recipientEmails,
       });
-      alert(`נשלח בהצלחה! ${result.sentCount}/${result.totalRecipients} מיילים`);
+      const skipped = result.skippedUnsubscribed || 0;
+      const skippedMsg = skipped > 0 ? `\n(${skipped} הוסרו אוטומטית — ביקשו הסרה מדיוור)` : '';
+      alert(`נשלח בהצלחה! ${result.sentCount}/${result.filteredRecipients || result.totalRecipients} מיילים${skippedMsg}`);
       setShowEditor(false);
       api.getCampaigns().then(setCampaigns).catch(() => {});
     } catch (err: any) {
@@ -354,16 +370,50 @@ const MarketingView: React.FC<MarketingViewProps> = ({ leads }) => {
               </div>
             </div>
 
+            {/* Test Campaign Section — Prominent */}
+            <div className="bg-amber-50 border border-amber-200 rounded-2xl p-5 space-y-3">
+              <h4 className="text-sm font-bold text-amber-800 flex items-center gap-2">
+                📧 שליחת בדיקה לפני שליחה המונית
+              </h4>
+              <div className="flex gap-2">
+                <input
+                  value={testEmail}
+                  onChange={e => setTestEmail(e.target.value)}
+                  placeholder="כתובת אימייל לבדיקה..."
+                  type="email"
+                  className="flex-1 px-4 py-2.5 border border-amber-300 rounded-xl text-sm focus:ring-2 focus:ring-amber-500 outline-none bg-white"
+                />
+                <button onClick={sendTest}
+                  className={`px-5 py-2.5 rounded-xl text-sm font-bold transition-all whitespace-nowrap ${testSent ? 'bg-green-500 text-white' : 'bg-amber-600 text-white hover:bg-amber-700'}`}>
+                  {testSent ? '✓ נשלח!' : '📧 שלח בדיקה'}
+                </button>
+              </div>
+              <button onClick={loadPreview} className="text-xs text-amber-700 hover:underline">
+                👁️ תצוגה מקדימה של ה-HTML המלא (כמו שהלקוח יראה)
+              </button>
+              <p className="text-[11px] text-amber-600">* לקוחות שביקשו הסרה מדיוור יסוננו אוטומטית בשליחה</p>
+            </div>
+
+            {/* Full HTML Preview Modal */}
+            {showPreview && (
+              <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={() => setShowPreview(false)}>
+                <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[85vh] overflow-hidden" onClick={e => e.stopPropagation()}>
+                  <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 bg-gray-50">
+                    <span className="text-sm font-bold text-gray-700">תצוגה מקדימה — HTML מלא</span>
+                    <button onClick={() => setShowPreview(false)} className="p-1 hover:bg-gray-200 rounded text-gray-500">✕</button>
+                  </div>
+                  <iframe srcDoc={previewHtml} className="w-full h-[70vh] border-0" title="Email Preview" />
+                </div>
+              </div>
+            )}
+
             {/* Actions */}
             <div className="flex gap-3">
               <button onClick={() => setStep('content')} className="flex-1 py-3 rounded-xl border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50">
                 → חזור לעריכה
               </button>
-              <button onClick={sendTest} className={`flex-1 py-3 rounded-xl text-sm font-bold transition-all ${testSent ? 'bg-green-100 text-green-700 border border-green-300' : 'bg-gray-100 text-gray-700 hover:bg-gray-200 border border-gray-200'}`}>
-                {testSent ? '✓ נשלח לבדיקה' : '📧 שלח בדיקה'}
-              </button>
               <button onClick={sendCampaign} disabled={sending || recipientEmails.length === 0}
-                className="flex-1 py-3 rounded-xl bg-gradient-to-l from-blue-600 to-purple-600 text-white text-sm font-bold hover:from-blue-700 hover:to-purple-700 disabled:opacity-50 shadow-lg">
+                className="flex-[2] py-3 px-6 rounded-xl bg-gradient-to-l from-blue-600 to-purple-600 text-white text-sm font-bold hover:from-blue-700 hover:to-purple-700 disabled:opacity-50 shadow-lg">
                 {sending ? '⏳ שולח...' : `🚀 שלח ל-${recipientEmails.length} נמענים`}
               </button>
             </div>
