@@ -2,7 +2,7 @@
 import React from 'react';
 
 interface SidebarProps {
-  activeTab?: 'dashboard' | 'leads' | 'customers' | 'inquiries' | 'pnl' | 'tasks' | 'marketing';
+  activeTab?: 'dashboard' | 'leads' | 'customers' | 'inquiries' | 'pnl' | 'tasks' | 'marketing' | 'site';
   onTabChange: (tab: string) => void;
   onSettingsClick: () => void;
   onAddLeadClick: () => void;
@@ -90,6 +90,16 @@ const Sidebar: React.FC<SidebarProps> = ({
             <CalendarIcon />
             <span className="font-medium text-right flex-1">משימות</span>
           </button>
+
+          <div className="border-t border-slate-800 my-2 pt-2">
+            <button
+              onClick={() => onTabChange('site')}
+              className={`w-full flex items-center gap-3 px-3 py-2 rounded-md transition-colors ${activeTab === 'site' ? 'bg-emerald-600 text-white shadow-lg' : 'text-emerald-300 hover:bg-slate-800'}`}
+            >
+              <GlobeIcon />
+              <span className="font-medium text-right flex-1">ניהול אתר</span>
+            </button>
+          </div>
         </nav>
       </div>
 
@@ -158,5 +168,6 @@ const SettingsIcon = () => <svg className="w-5 h-5" fill="none" stroke="currentC
 const SparklesIcon = () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-7.714 2.143L11 21l-2.286-6.857L1 12l7.714-2.143L11 3z" /></svg>;
 const AnalyticsIcon = () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>;
 const MarketingIcon = () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>;
+const GlobeIcon = () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" /></svg>;
 
 export default Sidebar;

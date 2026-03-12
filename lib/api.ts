@@ -43,6 +43,16 @@ const api = {
   saveCampaign: (data: any) => fetch('/api/campaigns', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(json),
   deleteCampaign: (id: string) => fetch('/api/campaigns', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) }).then(json),
 
+  // Site Management
+  syncSite: (type = 'all') => fetch(`/api/wix/sync?type=site-${type}`, { method: 'POST' }).then(json),
+  getSiteProducts: () => fetch('/api/wix/sync?data=products').then(json),
+  getSiteCollections: () => fetch('/api/wix/sync?data=collections').then(json),
+  getSiteBlog: () => fetch('/api/wix/sync?data=blog').then(json),
+  getSiteCoupons: () => fetch('/api/wix/sync?data=coupons').then(json),
+  getSiteSocial: () => fetch('/api/wix/sync?data=social').then(json),
+  getSiteStats: () => fetch('/api/wix/sync?data=stats').then(json),
+  saveSocialLink: (data: any) => fetch('/api/wix/sync?action=save-social', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(json),
+
   // AI
   aiAnalytics: (prompt: string, systemInstruction: string) => fetch('/api/ai', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, systemInstruction, type: 'analytics' }) }).then(json),
   aiExtract: (prompt: string, systemInstruction: string) => fetch('/api/ai', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, systemInstruction, type: 'extract' }) }).then(json),

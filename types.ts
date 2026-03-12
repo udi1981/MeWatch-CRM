@@ -127,6 +127,116 @@ export interface Campaign {
   sent_at?: string;
 }
 
+// ==================== Site Management Types ====================
+
+export type SiteProduct = {
+  id: string;
+  wix_id: string;
+  name: string;
+  slug: string;
+  description: string;
+  price: number;
+  compare_price?: number;
+  currency: string;
+  sku?: string;
+  weight?: number;
+  visible: boolean;
+  in_stock: boolean;
+  track_inventory: boolean;
+  quantity: number;
+  product_type?: string;
+  specs: Record<string, string>;
+  seo_title?: string;
+  seo_description?: string;
+  created_at: string;
+  updated_at: string;
+  synced_at?: string;
+  media: SiteProductMedia[];
+  variants: SiteProductVariant[];
+};
+
+export type SiteProductMedia = {
+  id: string;
+  url: string;
+  thumbnail_url?: string;
+  media_type: 'image' | 'video';
+  alt_text?: string;
+  sort_order: number;
+};
+
+export type SiteProductVariant = {
+  id: string;
+  sku?: string;
+  price?: number;
+  options: Record<string, string>;
+  in_stock: boolean;
+};
+
+export type SiteCollection = {
+  id: string;
+  wix_id: string;
+  name: string;
+  slug: string;
+  description?: string;
+  image_url?: string;
+  visible: boolean;
+  sort_order: number;
+};
+
+export type SiteBlogPost = {
+  id: string;
+  wix_id: string;
+  title: string;
+  slug: string;
+  content: string;
+  excerpt: string;
+  cover_image?: string;
+  status: 'draft' | 'published' | 'scheduled';
+  author: string;
+  category_ids: string[];
+  tags: string[];
+  published_at?: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type SiteBlogCategory = {
+  id: string;
+  wix_id: string;
+  name: string;
+  slug: string;
+  post_count: number;
+};
+
+export type SiteCoupon = {
+  id: string;
+  wix_id: string;
+  code: string;
+  type: 'moneyOff' | 'percentOff' | 'freeShipping' | 'fixedPrice' | 'other';
+  value: number;
+  min_purchase?: number;
+  usage_limit?: number;
+  usage_count: number;
+  active: boolean;
+  starts_at?: string;
+  expires_at?: string;
+};
+
+export type SiteSocialLink = {
+  id: string;
+  platform: 'facebook' | 'instagram' | 'tiktok' | 'youtube';
+  url: string;
+  followers?: number;
+  last_checked?: string;
+};
+
+export type SiteStats = {
+  products: number;
+  posts: number;
+  coupons: number;
+  collections: number;
+};
+
 export interface AppState {
   leads: Lead[];
   customers: Customer[];

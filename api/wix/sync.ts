@@ -36,11 +36,268 @@ async function addLog(level: string, message: string, details?: string) {
 
 export const config = { maxDuration: 60 };
 
+// ==================== SITE SYNC (Products, Blog, Coupons) ====================
+
+async function syncSiteProducts() {
+  const allProducts: any[] = [];
+  let offset = 0;
+  while (true) {
+    const r = await fetch(`${WIX_BASE}/stores/v1/products/query`, {
+      method: 'POST', headers: WIX_HEADERS,
+      body: JSON.stringify({ query: { paging: { limit: 100, offset } } }),
+    });
+    if (!r.ok) break;
+    const data = await r.json();
+    const products = data.products || [];
+    allProducts.push(...products);
+    if (products.length < 100) break;
+    offset += 100;
+    await new Promise(r => setTimeout(r, 50));
+  }
+
+  // Upsert products to DB
+  for (const p of allProducts) {
+    const price = parseFloat(p.price?.formatted?.replace(/[₪,]/g, '') || p.price?.price || p.priceData?.price || '0');
+    const comparePrice = parseFloat(p.price?.discountedPrice || p.priceData?.discountedPrice || '0');
+    const desc = p.description || '';
+    const media = p.media?.items || p.media?.mainMedia ? [p.media.mainMedia, ...(p.media?.items || [])] : [];
+    const variants = p.variants || p.productOptions?.length > 0 ? p.variants || [] : [];
+    const specs: Record<string, string> = {};
+    for (const info of (p.additionalInfoSections || [])) {
+      if (info.title && info.description) specs[info.title] = info.description;
+    }
+
+    await sql`INSERT INTO site_products (id, wix_id, name, slug, description, price, compare_price, currency, sku, weight, visible, product_type, specs, synced_at)
+      VALUES (${p.id}, ${p.id}, ${p.name || ''}, ${p.slug || ''}, ${desc}, ${price}, ${comparePrice || null}, ${'ILS'}, ${p.sku || null}, ${p.weight || null}, ${p.visible !== false}, ${p.productType || 'physical'}, ${JSON.stringify(specs)}, NOW())
+      ON CONFLICT (wix_id) DO UPDATE SET name = EXCLUDED.name, slug = EXCLUDED.slug, description = EXCLUDED.description, price = EXCLUDED.price, compare_price = EXCLUDED.compare_price, sku = EXCLUDED.sku, weight = EXCLUDED.weight, visible = EXCLUDED.visible, specs = EXCLUDED.specs, synced_at = NOW(), updated_at = NOW()`;
+
+    // Upsert media
+    await sql`DELETE FROM site_product_media WHERE product_id = ${p.id}`;
+    for (let mi = 0; mi < media.length; mi++) {
+      const m = media[mi];
+      if (!m) continue;
+      const url = m.image?.url || m.url || m.src || '';
+      if (!url) continue;
+      await sql`INSERT INTO site_product_media (product_id, url, thumbnail_url, media_type, alt_text, sort_order)
+        VALUES (${p.id}, ${url}, ${m.image?.url || url}, ${m.mediaType === 'VIDEO' ? 'video' : 'image'}, ${m.image?.altText || m.altText || ''}, ${mi})`;
+    }
+
+    // Upsert variants
+    for (const v of variants) {
+      const vPrice = parseFloat(v.variant?.priceData?.price || v.price?.price || '0');
+      await sql`INSERT INTO site_product_variants (id, product_id, wix_id, sku, price, weight, visible, options)
+        VALUES (${v.id || v._id || `${p.id}_${Math.random().toString(36).substr(2, 6)}`}, ${p.id}, ${v.id || v._id || null}, ${v.sku || null}, ${vPrice || null}, ${v.weight || null}, ${v.visible !== false}, ${JSON.stringify(v.choices || v.options || {})})
+        ON CONFLICT (id) DO UPDATE SET sku = EXCLUDED.sku, price = EXCLUDED.price, options = EXCLUDED.options, visible = EXCLUDED.visible`;
+    }
+  }
+
+  // Sync collections
+  try {
+    const r = await fetch(`${WIX_BASE}/stores/v1/collections/query`, {
+      method: 'POST', headers: WIX_HEADERS,
+      body: JSON.stringify({ query: { paging: { limit: 100, offset: 0 } } }),
+    });
+    if (r.ok) {
+      const data = await r.json();
+      for (const c of (data.collections || [])) {
+        await sql`INSERT INTO site_collections (id, wix_id, name, slug, description, image_url, visible)
+          VALUES (${c.id}, ${c.id}, ${c.name || ''}, ${c.slug || ''}, ${c.description || null}, ${c.media?.mainMedia?.image?.url || null}, ${c.visible !== false})
+          ON CONFLICT (wix_id) DO UPDATE SET name = EXCLUDED.name, slug = EXCLUDED.slug, description = EXCLUDED.description, image_url = EXCLUDED.image_url`;
+      }
+      // Link products to collections
+      for (const c of (data.collections || [])) {
+        if (c.productIds) {
+          for (const pid of c.productIds) {
+            await sql`INSERT INTO site_product_collections (product_id, collection_id) VALUES (${pid}, ${c.id}) ON CONFLICT DO NOTHING`;
+          }
+        }
+      }
+    }
+  } catch { /* skip collections if API not available */ }
+
+  return { products: allProducts.length };
+}
+
+async function syncSiteBlog() {
+  const allPosts: any[] = [];
+  let offset = 0;
+  while (true) {
+    const r = await fetch(`${WIX_BASE}/blog/v3/posts?paging.limit=100&paging.offset=${offset}`, {
+      method: 'GET', headers: WIX_HEADERS,
+    });
+    if (!r.ok) break;
+    const data = await r.json();
+    const posts = data.posts || [];
+    allPosts.push(...posts);
+    if (posts.length < 100) break;
+    offset += 100;
+    await new Promise(r => setTimeout(r, 50));
+  }
+
+  for (const p of allPosts) {
+    const content = p.richContent?.text || p.plainContent || p.content || '';
+    const excerpt = (p.excerpt || content.substring(0, 200)).trim();
+    const coverImage = p.coverImage?.url || p.media?.image?.url || p.heroImage?.url || '';
+    const tags = (p.tags || []).map((t: any) => typeof t === 'string' ? t : t.label || t.name || '');
+    const categoryIds = (p.categoryIds || []);
+
+    await sql`INSERT INTO site_blog_posts (id, wix_id, title, slug, content, excerpt, cover_image, status, author, category_ids, tags, published_at, synced_at)
+      VALUES (${p.id || p._id}, ${p.id || p._id}, ${p.title || ''}, ${p.slug || ''}, ${content}, ${excerpt}, ${coverImage}, ${p.published ? 'published' : 'draft'}, ${p.author?.displayName || ''}, ${categoryIds}, ${tags}, ${p.firstPublishedDate || p.publishedDate || null}, NOW())
+      ON CONFLICT (wix_id) DO UPDATE SET title = EXCLUDED.title, slug = EXCLUDED.slug, content = EXCLUDED.content, excerpt = EXCLUDED.excerpt, cover_image = EXCLUDED.cover_image, status = EXCLUDED.status, tags = EXCLUDED.tags, category_ids = EXCLUDED.category_ids, synced_at = NOW(), updated_at = NOW()`;
+  }
+
+  // Sync blog categories
+  try {
+    const r = await fetch(`${WIX_BASE}/blog/v3/categories?paging.limit=100`, {
+      method: 'GET', headers: WIX_HEADERS,
+    });
+    if (r.ok) {
+      const data = await r.json();
+      for (const c of (data.categories || [])) {
+        await sql`INSERT INTO site_blog_categories (id, wix_id, name, slug, post_count)
+          VALUES (${c.id || c._id}, ${c.id || c._id}, ${c.label || c.name || ''}, ${c.slug || ''}, ${c.postCount || 0})
+          ON CONFLICT (wix_id) DO UPDATE SET name = EXCLUDED.name, slug = EXCLUDED.slug, post_count = EXCLUDED.post_count`;
+      }
+    }
+  } catch { /* skip */ }
+
+  return { posts: allPosts.length };
+}
+
+async function syncSiteCoupons() {
+  let total = 0;
+  try {
+    const r = await fetch(`${WIX_BASE}/marketing/v1/coupons/query`, {
+      method: 'POST', headers: WIX_HEADERS,
+      body: JSON.stringify({ query: { paging: { limit: 100, offset: 0 } } }),
+    });
+    if (r.ok) {
+      const data = await r.json();
+      const coupons = data.coupons || [];
+      total = coupons.length;
+      for (const c of coupons) {
+        const type = c.moneyOffAmount ? 'moneyOff' : c.percentOffAmount ? 'percentOff' : c.freeShipping ? 'freeShipping' : c.fixedPriceAmount ? 'fixedPrice' : 'other';
+        const value = c.moneyOffAmount || c.percentOffAmount || c.fixedPriceAmount || 0;
+        await sql`INSERT INTO site_coupons (id, wix_id, code, type, value, min_purchase, usage_limit, usage_count, active, expires_at)
+          VALUES (${c.id || c._id}, ${c.id || c._id}, ${c.code || ''}, ${type}, ${parseFloat(value) || 0}, ${parseFloat(c.minimumSubtotal) || null}, ${c.usageLimit || null}, ${c.numberOfUsages || 0}, ${c.active !== false}, ${c.expirationTime || null})
+          ON CONFLICT (wix_id) DO UPDATE SET code = EXCLUDED.code, type = EXCLUDED.type, value = EXCLUDED.value, usage_count = EXCLUDED.usage_count, active = EXCLUDED.active, expires_at = EXCLUDED.expires_at`;
+      }
+    }
+  } catch { /* skip */ }
+  return { coupons: total };
+}
+
+async function handleSiteSync(req: VercelRequest, res: VercelResponse) {
+  const syncType = (req.query.type as string) || 'all';
+  await addLog('info', `סנכרון אתר: ${syncType}...`);
+
+  const results: any = {};
+  try {
+    if (syncType === 'products' || syncType === 'all') {
+      results.products = await syncSiteProducts();
+    }
+    if (syncType === 'blog' || syncType === 'all') {
+      results.blog = await syncSiteBlog();
+    }
+    if (syncType === 'coupons' || syncType === 'all') {
+      results.coupons = await syncSiteCoupons();
+    }
+
+    await addLog('success', `סנכרון אתר הושלם: ${JSON.stringify(results)}`);
+    return res.json({ ok: true, results });
+  } catch (error: any) {
+    await addLog('error', 'שגיאת סנכרון אתר', error.message);
+    return res.status(500).json({ error: error.message });
+  }
+}
+
+// Also need GET handler for fetching site data from DB
+async function handleSiteData(req: VercelRequest, res: VercelResponse) {
+  const dataType = (req.query.data as string) || 'products';
+
+  try {
+    if (dataType === 'products') {
+      const products = await sql`
+        SELECT p.*,
+          COALESCE((SELECT json_agg(json_build_object('id', m.id, 'url', m.url, 'thumbnail_url', m.thumbnail_url, 'media_type', m.media_type, 'alt_text', m.alt_text) ORDER BY m.sort_order) FROM site_product_media m WHERE m.product_id = p.id), '[]') as media,
+          COALESCE((SELECT json_agg(json_build_object('id', v.id, 'sku', v.sku, 'price', v.price, 'options', v.options, 'in_stock', v.in_stock) ) FROM site_product_variants v WHERE v.product_id = p.id), '[]') as variants
+        FROM site_products p ORDER BY p.updated_at DESC`;
+      return res.json({ products });
+    }
+    if (dataType === 'collections') {
+      const collections = await sql`SELECT * FROM site_collections ORDER BY sort_order, name`;
+      return res.json({ collections });
+    }
+    if (dataType === 'blog') {
+      const posts = await sql`SELECT * FROM site_blog_posts ORDER BY published_at DESC NULLS LAST`;
+      const categories = await sql`SELECT * FROM site_blog_categories ORDER BY post_count DESC`;
+      return res.json({ posts, categories });
+    }
+    if (dataType === 'coupons') {
+      const coupons = await sql`SELECT * FROM site_coupons ORDER BY created_at DESC`;
+      return res.json({ coupons });
+    }
+    if (dataType === 'social') {
+      const links = await sql`SELECT * FROM site_social_links ORDER BY platform`;
+      return res.json({ links });
+    }
+    if (dataType === 'stats') {
+      const [products, posts, coupons, collections] = await Promise.all([
+        sql`SELECT COUNT(*) as count FROM site_products`,
+        sql`SELECT COUNT(*) as count FROM site_blog_posts`,
+        sql`SELECT COUNT(*) as count FROM site_coupons`,
+        sql`SELECT COUNT(*) as count FROM site_collections`,
+      ]);
+      return res.json({
+        products: parseInt(products[0]?.count) || 0,
+        posts: parseInt(posts[0]?.count) || 0,
+        coupons: parseInt(coupons[0]?.count) || 0,
+        collections: parseInt(collections[0]?.count) || 0,
+      });
+    }
+    return res.status(400).json({ error: 'Invalid data type' });
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message });
+  }
+}
+
+// ==================== MAIN HANDLER ====================
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   const user = await verifyAuth(req);
   if (!user) return res.status(401).json({ error: 'Not authenticated' });
+
+  // Route: GET = fetch site data, POST with type=site-* = site sync
+  const syncType = (req.query.type as string) || '';
+  const action = (req.query.action as string) || '';
+
+  if (req.method === 'GET') {
+    return handleSiteData(req, res);
+  }
+
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
+  // Save social link
+  if (action === 'save-social') {
+    try {
+      const { platform, url, followers } = req.body || {};
+      if (!platform || !url) return res.status(400).json({ error: 'platform and url required' });
+      await sql`INSERT INTO site_social_links (platform, url, followers, last_checked)
+        VALUES (${platform}, ${url}, ${followers || null}, NOW())
+        ON CONFLICT (id) DO NOTHING`;
+      return res.json({ ok: true });
+    } catch (error: any) {
+      return res.status(500).json({ error: error.message });
+    }
+  }
+
+  // Site sync routes
+  if (syncType.startsWith('site')) {
+    req.query.type = syncType.replace('site-', '') || 'all';
+    return handleSiteSync(req, res);
+  }
+
+  // Original CRM sync
   try {
     await addLog('info', 'מתחיל סנכרון מלא מול Wix...');
 
