@@ -191,9 +191,9 @@ const Dashboard: React.FC<DashboardProps> = ({ leads, statuses }) => {
         <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
           <h3 className="text-lg font-bold mb-4 text-gray-800">סטטוס תשלומים</h3>
           <div className="space-y-3">
-            {Object.entries(fm.paymentStatusBreakdown).sort((a, b) => b[1] - a[1]).map(([status, count]) => {
-              const total = Object.values(fm.paymentStatusBreakdown).reduce((a, b) => a + b, 0);
-              const pct = total > 0 ? Math.round((count / total) * 100) : 0;
+            {Object.entries(fm.paymentStatusBreakdown).sort((a, b) => (b[1] as number) - (a[1] as number)).map(([status, count]) => {
+              const total = (Object.values(fm.paymentStatusBreakdown) as number[]).reduce((a, b) => a + b, 0);
+              const pct = total > 0 ? Math.round(((count as number) / (total as number)) * 100) : 0;
               const color = status === 'שולם' ? 'bg-green-500' : status === 'הוחזר' ? 'bg-purple-500' : 'bg-orange-400';
               return (
                 <div key={status} className="flex items-center justify-between">
