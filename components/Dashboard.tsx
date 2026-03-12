@@ -7,6 +7,8 @@ import api from '../lib/api';
 interface DashboardProps {
   leads: Lead[];
   statuses: StatusConfig[];
+  onSync?: () => Promise<void>;
+  isSyncing?: boolean;
 }
 
 interface DashboardData {
@@ -17,13 +19,18 @@ interface DashboardData {
   customerCount: number;
 }
 
-const Dashboard: React.FC<DashboardProps> = ({ leads, statuses }) => {
+const Dashboard: React.FC<DashboardProps> = ({ leads, statuses, onSync, isSyncing }) => {
   const fm = useMemo(() => computeFinancialMetrics(leads), [leads]);
   const [dbData, setDbData] = useState<DashboardData | null>(null);
+  const [lastRefresh, setLastRefresh] = useState<string>('');
+
+  const refreshDashboard = () => {
+    api.getDashboardData().then(d => { setDbData(d); setLastRefresh(new Date().toLocaleTimeString('he-IL')); }).catch(() => {});
+  };
 
   useEffect(() => {
-    api.getDashboardData().then(setDbData).catch(() => {});
-  }, []);
+    refreshDashboard();
+  }, [leads]);
 
   // Renewal stats
   const renewalStats = useMemo(() => {
@@ -52,6 +59,25 @@ const Dashboard: React.FC<DashboardProps> = ({ leads, statuses }) => {
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
+      {/* Sync + Refresh Bar */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          {lastRefresh && <span className="text-xs text-gray-400">עודכן: {lastRefresh}</span>}
+        </div>
+        <div className="flex items-center gap-2">
+          <button onClick={refreshDashboard} className="text-xs text-blue-500 hover:text-blue-700 font-medium px-3 py-1.5 rounded-lg hover:bg-blue-50 transition-colors">
+            🔄 רענון נתונים
+          </button>
+          {onSync && (
+            <button onClick={onSync} disabled={isSyncing}
+              className="flex items-center gap-2 px-4 py-2 bg-gradient-to-l from-blue-600 to-indigo-600 text-white rounded-xl text-sm font-bold hover:from-blue-700 hover:to-indigo-700 disabled:opacity-50 shadow-lg transition-all">
+              <svg className={`w-4 h-4 ${isSyncing ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+              {isSyncing ? 'מסנכרן...' : 'סנכרון Wix'}
+            </button>
+          )}
+        </div>
+      </div>
+
       {/* Today's Revenue - Hero Card */}
       {dbData && (
         <div className="bg-gradient-to-l from-blue-600 via-blue-700 to-indigo-800 p-6 rounded-2xl shadow-xl text-white relative overflow-hidden">

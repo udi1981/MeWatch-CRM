@@ -1,11 +1,12 @@
 
 import React, { useState, useMemo } from 'react';
-import { Customer, Lead } from '../types';
+import { Customer, Lead, Inquiry } from '../types';
 import api from '../lib/api';
 
 interface CustomersViewProps {
   customers: Customer[];
   leads: Lead[];
+  inquiries: Inquiry[];
   onOpenLead: (id: string) => void;
   onRefreshCustomers?: () => void;
 }
@@ -22,7 +23,7 @@ const SEGMENTS = [
   { id: 'contact_only', label: 'אנשי קשר בלבד', color: 'gray' },
 ] as const;
 
-const CustomersView: React.FC<CustomersViewProps> = ({ customers, leads, onOpenLead, onRefreshCustomers }) => {
+const CustomersView: React.FC<CustomersViewProps> = ({ customers, leads, inquiries, onOpenLead, onRefreshCustomers }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [activeSegment, setActiveSegment] = useState<string>('all');
   const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
@@ -403,6 +404,34 @@ const CustomersView: React.FC<CustomersViewProps> = ({ customers, leads, onOpenL
                   </div>
                 </div>
               )}
+
+              {/* Customer Inquiries */}
+              {(() => {
+                const custInquiries = inquiries.filter(inq =>
+                  inq.customerId === selectedCustomer.id ||
+                  (inq.email && selectedCustomer.email && inq.email.toLowerCase() === selectedCustomer.email.toLowerCase()) ||
+                  (inq.phone && selectedCustomer.phone && inq.phone.replace(/[^0-9]/g, '') === selectedCustomer.phone.replace(/[^0-9]/g, ''))
+                );
+                return custInquiries.length > 0 ? (
+                  <div>
+                    <h3 className="text-sm font-bold text-gray-700 mb-2">📩 פניות ({custInquiries.length})</h3>
+                    <div className="space-y-2 max-h-48 overflow-y-auto">
+                      {custInquiries.map(inq => (
+                        <div key={inq.id} className="bg-purple-50 rounded-xl p-3">
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="font-medium text-sm text-purple-800">{inq.subject || 'פנייה'}</span>
+                            <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${inq.status === 'new' ? 'bg-blue-100 text-blue-600' : inq.status === 'handled' ? 'bg-green-100 text-green-600' : 'bg-gray-100 text-gray-600'}`}>
+                              {inq.status === 'new' ? 'חדש' : inq.status === 'handled' ? 'טופל' : 'סגור'}
+                            </span>
+                          </div>
+                          {inq.message && <p className="text-xs text-gray-600 line-clamp-2">{inq.message}</p>}
+                          <p className="text-[10px] text-gray-400 mt-1">{new Date(inq.createdAt).toLocaleDateString('he-IL')}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null;
+              })()}
 
               {selectedCustomer.subscriptionCount === 0 && (
                 <div className="text-center py-4">

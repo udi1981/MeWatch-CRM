@@ -46,7 +46,11 @@ async function syncSiteProducts() {
       method: 'POST', headers: WIX_HEADERS,
       body: JSON.stringify({ query: { paging: { limit: 100, offset } } }),
     });
-    if (!r.ok) break;
+    if (!r.ok) {
+      const errText = await r.text().catch(() => 'unknown');
+      await addLog('error', `Wix Products API error (${r.status})`, errText.substring(0, 500));
+      break;
+    }
     const data = await r.json();
     const products = data.products || [];
     allProducts.push(...products);
@@ -55,6 +59,7 @@ async function syncSiteProducts() {
     await new Promise(r => setTimeout(r, 50));
   }
 
+  await addLog('info', `Products API returned ${allProducts.length} products`);
   // Upsert products to DB
   for (const p of allProducts) {
     const price = parseFloat(p.price?.formatted?.replace(/[₪,]/g, '') || p.price?.price || p.priceData?.price || '0');
@@ -67,9 +72,13 @@ async function syncSiteProducts() {
       if (info.title && info.description) specs[info.title] = info.description;
     }
 
-    await sql`INSERT INTO site_products (id, wix_id, name, slug, description, price, compare_price, currency, sku, weight, visible, product_type, specs, synced_at)
-      VALUES (${p.id}, ${p.id}, ${p.name || ''}, ${p.slug || ''}, ${desc}, ${price}, ${comparePrice || null}, ${'ILS'}, ${p.sku || null}, ${p.weight || null}, ${p.visible !== false}, ${p.productType || 'physical'}, ${JSON.stringify(specs)}, NOW())
-      ON CONFLICT (wix_id) DO UPDATE SET name = EXCLUDED.name, slug = EXCLUDED.slug, description = EXCLUDED.description, price = EXCLUDED.price, compare_price = EXCLUDED.compare_price, sku = EXCLUDED.sku, weight = EXCLUDED.weight, visible = EXCLUDED.visible, specs = EXCLUDED.specs, synced_at = NOW(), updated_at = NOW()`;
+    const inStock = p.stock?.inStock !== false && p.stock?.inventoryStatus !== 'OUT_OF_STOCK';
+    const trackInventory = p.stock?.trackInventory === true;
+    const quantity = p.stock?.quantity || 0;
+
+    await sql`INSERT INTO site_products (id, wix_id, name, slug, description, price, compare_price, currency, sku, weight, visible, in_stock, track_inventory, quantity, product_type, specs, synced_at)
+      VALUES (${p.id}, ${p.id}, ${p.name || ''}, ${p.slug || ''}, ${desc}, ${price}, ${comparePrice || null}, ${'ILS'}, ${p.sku || null}, ${p.weight || null}, ${p.visible !== false}, ${inStock}, ${trackInventory}, ${quantity}, ${p.productType || 'physical'}, ${JSON.stringify(specs)}, NOW())
+      ON CONFLICT (wix_id) DO UPDATE SET name = EXCLUDED.name, slug = EXCLUDED.slug, description = EXCLUDED.description, price = EXCLUDED.price, compare_price = EXCLUDED.compare_price, sku = EXCLUDED.sku, weight = EXCLUDED.weight, visible = EXCLUDED.visible, in_stock = EXCLUDED.in_stock, track_inventory = EXCLUDED.track_inventory, quantity = EXCLUDED.quantity, specs = EXCLUDED.specs, synced_at = NOW(), updated_at = NOW()`;
 
     // Upsert media
     await sql`DELETE FROM site_product_media WHERE product_id = ${p.id}`;
@@ -122,10 +131,14 @@ async function syncSiteBlog() {
   const allPosts: any[] = [];
   let offset = 0;
   while (true) {
-    const r = await fetch(`${WIX_BASE}/blog/v3/posts?paging.limit=100&paging.offset=${offset}`, {
+    const r = await fetch(`${WIX_BASE}/blog/v3/posts?paging.limit=100&paging.offset=${offset}&fieldsets=CONTENT_TEXT`, {
       method: 'GET', headers: WIX_HEADERS,
     });
-    if (!r.ok) break;
+    if (!r.ok) {
+      const errText = await r.text().catch(() => 'unknown');
+      await addLog('error', `Wix Blog API error (${r.status})`, errText.substring(0, 500));
+      break;
+    }
     const data = await r.json();
     const posts = data.posts || [];
     allPosts.push(...posts);
@@ -135,9 +148,10 @@ async function syncSiteBlog() {
   }
 
   for (const p of allPosts) {
-    const content = p.richContent?.text || p.plainContent || p.content || '';
+    // Wix Blog v3: with fieldsets=CONTENT_TEXT, content comes in contentText or plainContent
+    const content = p.contentText || p.plainContent || p.richContent?.text || p.content || '';
     const excerpt = (p.excerpt || content.substring(0, 200)).trim();
-    const coverImage = p.coverImage?.url || p.media?.image?.url || p.heroImage?.url || '';
+    const coverImage = p.coverImage?.url || p.coverImage?.image?.url || p.media?.image?.url || p.heroImage?.url || '';
     const tags = (p.tags || []).map((t: any) => typeof t === 'string' ? t : t.label || t.name || '');
     const categoryIds = (p.categoryIds || []);
 
@@ -276,6 +290,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+
+  // Save blog post (local DB only)
+  if (action === 'save-blog-post') {
+    try {
+      const { id, title, content, excerpt, cover_image, tags, seo_title, seo_description } = req.body || {};
+      if (!title) return res.status(400).json({ error: 'title required' });
+      const postId = id || `local_${Date.now()}`;
+      const slug = title.replace(/\s+/g, '-').toLowerCase();
+      await sql`INSERT INTO site_blog_posts (id, wix_id, title, slug, content, excerpt, cover_image, status, author, category_ids, tags, seo_title, seo_description, synced_at)
+        VALUES (${postId}, ${postId}, ${title}, ${slug}, ${content || ''}, ${excerpt || ''}, ${cover_image || ''}, 'draft', 'MeWatch', ${[]}, ${tags || []}, ${seo_title || null}, ${seo_description || null}, NOW())
+        ON CONFLICT (wix_id) DO UPDATE SET title = EXCLUDED.title, slug = EXCLUDED.slug, content = EXCLUDED.content, excerpt = EXCLUDED.excerpt, cover_image = EXCLUDED.cover_image, tags = EXCLUDED.tags, updated_at = NOW()`;
+      await addLog('info', `Blog post saved: ${title}`);
+      return res.json({ ok: true, id: postId });
+    } catch (error: any) {
+      return res.status(500).json({ error: error.message });
+    }
+  }
 
   // Save social link
   if (action === 'save-social') {

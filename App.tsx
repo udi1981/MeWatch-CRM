@@ -80,16 +80,23 @@ const App: React.FC = () => {
     }).finally(() => setAuthLoading(false));
   }, []);
 
-  // Load data from API when authenticated
-  useEffect(() => {
-    if (!isAuthenticated) return;
-    Promise.all([
+  // Load all data from API
+  const refreshAllData = useCallback(() => {
+    return Promise.all([
       api.getLeads().then(setLeads).catch(() => {}),
       api.getCustomers().then(setCustomers).catch(() => {}),
       api.getInquiries().then(setInquiries).catch(() => {}),
       api.getLogs().then(setLogs).catch(() => {}),
     ]);
-  }, [isAuthenticated]);
+  }, []);
+
+  // Load data when authenticated + auto-refresh every 5 min
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    refreshAllData();
+    const interval = setInterval(refreshAllData, 5 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, [isAuthenticated, refreshAllData]);
 
   // Save visibleColumns to localStorage (UI preference only)
   useEffect(() => {
@@ -706,7 +713,7 @@ const App: React.FC = () => {
             )}
 
             {activeTab === 'dashboard' ? (
-              <Dashboard leads={leads} statuses={statuses} />
+              <Dashboard leads={leads} statuses={statuses} onSync={handleWixSync} isSyncing={isSyncing} />
             ) : activeTab === 'tasks' ? (
               <TasksView
                 tasks={tasks}
@@ -717,7 +724,7 @@ const App: React.FC = () => {
                 onOpenLead={(id) => { setSelectedLeadId(id); setActiveTab('leads'); }}
               />
             ) : activeTab === 'customers' ? (
-              <CustomersView customers={customers} leads={leads} onOpenLead={(id) => { setSelectedLeadId(id); setActiveTab('leads'); }} onRefreshCustomers={() => api.getCustomers().then(setCustomers).catch(() => {})} />
+              <CustomersView customers={customers} leads={leads} inquiries={inquiries} onOpenLead={(id) => { setSelectedLeadId(id); setActiveTab('leads'); }} onRefreshCustomers={() => api.getCustomers().then(setCustomers).catch(() => {})} />
             ) : activeTab === 'inquiries' ? (
               <InquiriesView
                 inquiries={inquiries}
