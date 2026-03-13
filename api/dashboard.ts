@@ -37,14 +37,14 @@ async function getAISummary() {
     // 1. Revenue Overview: today/yesterday/week/month/year + comparisons
     sql`
       SELECT
-        COALESCE(SUM(CASE WHEN sale_date = CURRENT_DATE THEN total_sales END), 0) as today,
-        COALESCE(SUM(CASE WHEN sale_date = CURRENT_DATE - 1 THEN total_sales END), 0) as yesterday,
-        COALESCE(SUM(CASE WHEN sale_date >= CURRENT_DATE - 7 THEN total_sales END), 0) as last_7_days,
-        COALESCE(SUM(CASE WHEN sale_date >= CURRENT_DATE - 14 AND sale_date < CURRENT_DATE - 7 THEN total_sales END), 0) as prev_7_days,
-        COALESCE(SUM(CASE WHEN sale_date >= date_trunc('month', CURRENT_DATE) THEN total_sales END), 0) as this_month,
-        COALESCE(SUM(CASE WHEN sale_date >= date_trunc('month', CURRENT_DATE - INTERVAL '1 month') AND sale_date < date_trunc('month', CURRENT_DATE) THEN total_sales END), 0) as last_month,
-        COALESCE(SUM(CASE WHEN sale_date >= date_trunc('year', CURRENT_DATE) THEN total_sales END), 0) as this_year,
-        COALESCE(SUM(CASE WHEN sale_date >= date_trunc('year', CURRENT_DATE - INTERVAL '1 year') AND sale_date < date_trunc('year', CURRENT_DATE) THEN total_sales END), 0) as last_year,
+        COALESCE(SUM(CASE WHEN sale_date = (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Jerusalem')::date THEN total_sales END), 0) as today,
+        COALESCE(SUM(CASE WHEN sale_date = (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Jerusalem')::date - 1 THEN total_sales END), 0) as yesterday,
+        COALESCE(SUM(CASE WHEN sale_date >= (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Jerusalem')::date - 7 THEN total_sales END), 0) as last_7_days,
+        COALESCE(SUM(CASE WHEN sale_date >= (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Jerusalem')::date - 14 AND sale_date < (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Jerusalem')::date - 7 THEN total_sales END), 0) as prev_7_days,
+        COALESCE(SUM(CASE WHEN sale_date >= date_trunc('month', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Jerusalem')::date) THEN total_sales END), 0) as this_month,
+        COALESCE(SUM(CASE WHEN sale_date >= date_trunc('month', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Jerusalem')::date - INTERVAL '1 month') AND sale_date < date_trunc('month', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Jerusalem')::date) THEN total_sales END), 0) as last_month,
+        COALESCE(SUM(CASE WHEN sale_date >= date_trunc('year', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Jerusalem')::date) THEN total_sales END), 0) as this_year,
+        COALESCE(SUM(CASE WHEN sale_date >= date_trunc('year', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Jerusalem')::date - INTERVAL '1 year') AND sale_date < date_trunc('year', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Jerusalem')::date) THEN total_sales END), 0) as last_year,
         COALESCE(SUM(total_sales), 0) as all_time,
         COALESCE(SUM(total_orders), 0) as all_time_orders,
         COALESCE(SUM(refunds), 0) as all_time_refunds
@@ -53,7 +53,7 @@ async function getAISummary() {
     // 2. Daily Revenue — last 30 days
     sql`
       SELECT sale_date::text as date, total_sales as revenue, total_orders as orders, refunds
-      FROM daily_sales WHERE sale_date >= CURRENT_DATE - 30
+      FROM daily_sales WHERE sale_date >= (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Jerusalem')::date - 30
       ORDER BY sale_date DESC
     `,
     // 3. Weekly Revenue — last 12 weeks
@@ -61,7 +61,7 @@ async function getAISummary() {
       SELECT
         to_char(date_trunc('week', sale_date), 'YYYY-MM-DD') as week_start,
         SUM(total_sales) as revenue, SUM(total_orders) as orders
-      FROM daily_sales WHERE sale_date >= CURRENT_DATE - 84
+      FROM daily_sales WHERE sale_date >= (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Jerusalem')::date - 84
       GROUP BY date_trunc('week', sale_date)
       ORDER BY week_start DESC
     `,
@@ -70,7 +70,7 @@ async function getAISummary() {
       SELECT
         to_char(date_trunc('month', sale_date), 'YYYY-MM') as month,
         SUM(total_sales) as revenue, SUM(total_orders) as orders, SUM(refunds) as refunds
-      FROM daily_sales WHERE sale_date >= CURRENT_DATE - INTERVAL '24 months'
+      FROM daily_sales WHERE sale_date >= (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Jerusalem')::date - INTERVAL '24 months'
       GROUP BY date_trunc('month', sale_date)
       ORDER BY month ASC
     `,
@@ -171,7 +171,7 @@ async function getAISummary() {
         COUNT(*) as new_leads,
         COUNT(*) FILTER (WHERE dynamic_data->>'hasActiveSubscription' = 'כן' OR dynamic_data->>'wixStatus' = 'ACTIVE') as active_at_creation
       FROM leads
-      WHERE created_at >= CURRENT_DATE - INTERVAL '12 months'
+      WHERE created_at >= (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Jerusalem')::date - INTERVAL '12 months'
       GROUP BY date_trunc('month', created_at)
       ORDER BY month ASC
     `,
@@ -266,12 +266,12 @@ async function getDashboardData() {
   const [todayRows, monthlyRows, customerCountRows] = await Promise.all([
     sql`
       SELECT
-        COALESCE(SUM(CASE WHEN sale_date = CURRENT_DATE THEN total_sales END), 0) as today_revenue,
-        COALESCE(SUM(CASE WHEN sale_date = CURRENT_DATE THEN total_orders END), 0) as today_orders,
-        COALESCE(SUM(CASE WHEN sale_date = CURRENT_DATE - 1 THEN total_sales END), 0) as yesterday_revenue,
-        COALESCE(SUM(CASE WHEN sale_date = CURRENT_DATE - 1 THEN total_orders END), 0) as yesterday_orders,
-        COALESCE(SUM(CASE WHEN sale_date >= date_trunc('month', CURRENT_DATE) THEN total_sales END), 0) as mtd_revenue,
-        COALESCE(SUM(CASE WHEN sale_date >= date_trunc('month', CURRENT_DATE) THEN total_orders END), 0) as mtd_orders,
+        COALESCE(SUM(CASE WHEN sale_date = (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Jerusalem')::date THEN total_sales END), 0) as today_revenue,
+        COALESCE(SUM(CASE WHEN sale_date = (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Jerusalem')::date THEN total_orders END), 0) as today_orders,
+        COALESCE(SUM(CASE WHEN sale_date = (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Jerusalem')::date - 1 THEN total_sales END), 0) as yesterday_revenue,
+        COALESCE(SUM(CASE WHEN sale_date = (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Jerusalem')::date - 1 THEN total_orders END), 0) as yesterday_orders,
+        COALESCE(SUM(CASE WHEN sale_date >= date_trunc('month', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Jerusalem')::date) THEN total_sales END), 0) as mtd_revenue,
+        COALESCE(SUM(CASE WHEN sale_date >= date_trunc('month', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Jerusalem')::date) THEN total_orders END), 0) as mtd_orders,
         COALESCE(SUM(total_sales), 0) as all_time_revenue,
         COALESCE(SUM(total_orders), 0) as all_time_orders,
         COALESCE(SUM(refunds), 0) as all_time_refunds
@@ -284,7 +284,7 @@ async function getDashboardData() {
         SUM(total_orders) as orders,
         SUM(refunds) as refunds
       FROM daily_sales
-      WHERE sale_date >= CURRENT_DATE - INTERVAL '12 months'
+      WHERE sale_date >= (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Jerusalem')::date - INTERVAL '12 months'
       GROUP BY date_trunc('month', sale_date)
       ORDER BY month ASC
     `,

@@ -62,7 +62,8 @@ async function syncSiteProducts() {
   await addLog('info', `Products API returned ${allProducts.length} products`);
   // Upsert products to DB
   for (const p of allProducts) {
-    const price = parseFloat(p.price?.formatted?.replace(/[₪,]/g, '') || p.price?.price || p.priceData?.price || '0');
+    const priceStr = typeof p.price?.formatted === 'string' ? p.price.formatted.replace(/[₪,]/g, '') : '';
+    const price = parseFloat(priceStr || p.price?.price || p.priceData?.price || '0') || 0;
     const comparePrice = parseFloat(p.price?.discountedPrice || p.priceData?.discountedPrice || '0');
     const desc = p.description || '';
     const media = p.media?.items || p.media?.mainMedia ? [p.media.mainMedia, ...(p.media?.items || [])] : [];
@@ -410,6 +411,59 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (ecomOrders.length > 0) await addLog('info', `נטענו ${ecomOrders.length} הזמנות חנות (e-commerce).`);
     } catch { /* skip */ }
 
+    // ==================== BUILD DAILY SALES (early — before heavy processing) ====================
+    const dailySalesMap: Record<string, { sales: number; orders: number; refunds: number }> = {};
+    const toIsraelDate = (dateStr: string): string | null => {
+      try {
+        const d = new Date(dateStr);
+        if (isNaN(d.getTime())) return null;
+        return d.toLocaleDateString('en-CA', { timeZone: 'Asia/Jerusalem' }); // YYYY-MM-DD
+      } catch { return null; }
+    };
+
+    // Aggregate pricing plan orders
+    for (const order of allOrders) {
+      const dateStr = order.startDate || order.createdDate || order._createdDate;
+      if (!dateStr) continue;
+      const date = toIsraelDate(dateStr);
+      if (!date) continue;
+      const price = parseFloat(order.planPrice || order.priceDetails?.planPrice || order.pricing?.prices?.[0]?.price?.total || order.priceDetails?.total || '0');
+      if (price <= 0) continue;
+      if (!dailySalesMap[date]) dailySalesMap[date] = { sales: 0, orders: 0, refunds: 0 };
+      dailySalesMap[date].sales += price;
+      dailySalesMap[date].orders += 1;
+      if (order.lastPaymentStatus === 'REFUNDED') dailySalesMap[date].refunds += price;
+    }
+
+    // Aggregate ecommerce orders
+    for (const eo of ecomOrders) {
+      const dateStr = eo._createdDate || eo.createdDate || eo.dateCreated;
+      if (!dateStr) continue;
+      const date = toIsraelDate(dateStr);
+      if (!date) continue;
+      const amount = parseFloat(eo.priceSummary?.total?.amount || eo.totals?.total || '0');
+      if (amount <= 0) continue;
+      if (!dailySalesMap[date]) dailySalesMap[date] = { sales: 0, orders: 0, refunds: 0 };
+      dailySalesMap[date].sales += amount;
+      dailySalesMap[date].orders += 1;
+    }
+
+    // Upsert daily sales to DB (batch of 20)
+    const dailyEntries = Object.entries(dailySalesMap);
+    for (let i = 0; i < dailyEntries.length; i += 20) {
+      const batch = dailyEntries.slice(i, i + 20);
+      await Promise.all(batch.map(([date, data]) =>
+        sql`INSERT INTO daily_sales (sale_date, total_sales, total_orders, avg_order_value, refunds)
+          VALUES (${date}, ${data.sales}, ${data.orders}, ${data.orders > 0 ? data.sales / data.orders : 0}, ${data.refunds})
+          ON CONFLICT (sale_date) DO UPDATE SET
+            total_sales = EXCLUDED.total_sales,
+            total_orders = EXCLUDED.total_orders,
+            avg_order_value = EXCLUDED.avg_order_value,
+            refunds = EXCLUDED.refunds`
+      ));
+    }
+    await addLog('info', `עודכנו ${dailyEntries.length} ימי מכירות ב-daily_sales.`);
+
     // Step 5: Fetch Wix Forms submissions
     const wixFormSubmissions: any[] = [];
     try {
@@ -727,59 +781,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
       await addLog('info', `${wixFormSubmissions.length} פניות מטפסים עובדו.`);
     }
-
-    // ==================== BUILD DAILY SALES ====================
-    const dailySalesMap: Record<string, { sales: number; orders: number; refunds: number }> = {};
-    const toIsraelDate = (dateStr: string): string | null => {
-      try {
-        const d = new Date(dateStr);
-        if (isNaN(d.getTime())) return null;
-        return d.toLocaleDateString('en-CA', { timeZone: 'Asia/Jerusalem' }); // YYYY-MM-DD
-      } catch { return null; }
-    };
-
-    // Aggregate pricing plan orders
-    for (const order of allOrders) {
-      const dateStr = order.startDate || order.createdDate || order._createdDate;
-      if (!dateStr) continue;
-      const date = toIsraelDate(dateStr);
-      if (!date) continue;
-      const price = parseFloat(order.planPrice || order.priceDetails?.planPrice || order.pricing?.prices?.[0]?.price?.total || order.priceDetails?.total || '0');
-      if (price <= 0) continue;
-      if (!dailySalesMap[date]) dailySalesMap[date] = { sales: 0, orders: 0, refunds: 0 };
-      dailySalesMap[date].sales += price;
-      dailySalesMap[date].orders += 1;
-      if (order.lastPaymentStatus === 'REFUNDED') dailySalesMap[date].refunds += price;
-    }
-
-    // Aggregate ecommerce orders
-    for (const eo of ecomOrders) {
-      const dateStr = eo._createdDate || eo.createdDate || eo.dateCreated;
-      if (!dateStr) continue;
-      const date = toIsraelDate(dateStr);
-      if (!date) continue;
-      const amount = parseFloat(eo.priceSummary?.total?.amount || eo.totals?.total || '0');
-      if (amount <= 0) continue;
-      if (!dailySalesMap[date]) dailySalesMap[date] = { sales: 0, orders: 0, refunds: 0 };
-      dailySalesMap[date].sales += amount;
-      dailySalesMap[date].orders += 1;
-    }
-
-    // Upsert daily sales to DB
-    const dailyEntries = Object.entries(dailySalesMap);
-    for (let i = 0; i < dailyEntries.length; i += BATCH) {
-      const batch = dailyEntries.slice(i, i + BATCH);
-      await Promise.all(batch.map(([date, data]) =>
-        sql`INSERT INTO daily_sales (sale_date, total_sales, total_orders, avg_order_value, refunds)
-          VALUES (${date}, ${data.sales}, ${data.orders}, ${data.orders > 0 ? data.sales / data.orders : 0}, ${data.refunds})
-          ON CONFLICT (sale_date) DO UPDATE SET
-            total_sales = EXCLUDED.total_sales,
-            total_orders = EXCLUDED.total_orders,
-            avg_order_value = EXCLUDED.avg_order_value,
-            refunds = EXCLUDED.refunds`
-      ));
-    }
-    await addLog('info', `עודכנו ${dailyEntries.length} ימי מכירות ב-daily_sales.`);
 
     const subscriberCount = Array.from(customerMap.values()).filter((c: any) => c.tags.includes('subscriber')).length;
     await addLog('success', `סנכרון מלא הושלם! ${wixLeads.length} מנויים, ${customersToSave.length} לקוחות נשמרו (${subscriberCount} מנויים). ${allOrders.length} הזמנות מנויים${ecomOrders.length > 0 ? ` + ${ecomOrders.length} הזמנות חנות` : ''}.`);
