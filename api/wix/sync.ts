@@ -421,18 +421,43 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       } catch { return null; }
     };
 
-    // Aggregate pricing plan orders
+    // Aggregate pricing plan orders — try multiple price field locations
+    let ppMatched = 0, ppSkipped = 0;
     for (const order of allOrders) {
       const dateStr = order.startDate || order.createdDate || order._createdDate;
       if (!dateStr) continue;
       const date = toIsraelDate(dateStr);
       if (!date) continue;
-      const price = parseFloat(order.planPrice || order.priceDetails?.planPrice || order.pricing?.prices?.[0]?.price?.total || order.priceDetails?.total || '0');
-      if (price <= 0) continue;
+      const price = parseFloat(
+        order.planPrice || order.priceDetails?.planPrice ||
+        order.pricing?.prices?.[0]?.price?.total || order.pricing?.prices?.[0]?.price?.amount ||
+        order.priceDetails?.total || order.priceDetails?.subtotal ||
+        order.pricing?.singlePaymentForDuration?.amount ||
+        order.pricing?.subscription?.cycleDuration?.price?.amount ||
+        order.totalPrice || order.amount ||
+        '0'
+      );
+      if (price <= 0) { ppSkipped++; continue; }
+      ppMatched++;
       if (!dailySalesMap[date]) dailySalesMap[date] = { sales: 0, orders: 0, refunds: 0 };
       dailySalesMap[date].sales += price;
       dailySalesMap[date].orders += 1;
       if (order.lastPaymentStatus === 'REFUNDED') dailySalesMap[date].refunds += price;
+    }
+    await addLog('info', `Pricing plan: ${ppMatched} עם מחיר, ${ppSkipped} ללא מחיר מתוך ${allOrders.length}.`);
+
+    // Log sample order structure for debugging (first order with price=0)
+    if (ppSkipped > ppMatched && allOrders.length > 0) {
+      const sample = allOrders.find((o: any) => {
+        const p = parseFloat(o.planPrice || o.priceDetails?.planPrice || o.pricing?.prices?.[0]?.price?.total || o.pricing?.prices?.[0]?.price?.amount || o.priceDetails?.total || o.totalPrice || '0');
+        return p <= 0;
+      });
+      if (sample) {
+        const keys = Object.keys(sample).join(', ');
+        const priceKeys = sample.pricing ? JSON.stringify(sample.pricing).substring(0, 300) : 'no pricing';
+        const priceDetails = sample.priceDetails ? JSON.stringify(sample.priceDetails).substring(0, 300) : 'no priceDetails';
+        await addLog('info', `Sample order keys: ${keys}`, `pricing: ${priceKeys} | priceDetails: ${priceDetails}`);
+      }
     }
 
     // Aggregate ecommerce orders
@@ -448,7 +473,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       dailySalesMap[date].orders += 1;
     }
 
-    // Upsert daily sales to DB (batch of 20)
+    // Upsert daily sales to DB — use GREATEST to never overwrite higher existing values
     const dailyEntries = Object.entries(dailySalesMap);
     for (let i = 0; i < dailyEntries.length; i += 20) {
       const batch = dailyEntries.slice(i, i + 20);
@@ -456,10 +481,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         sql`INSERT INTO daily_sales (sale_date, total_sales, total_orders, avg_order_value, refunds)
           VALUES (${date}, ${data.sales}, ${data.orders}, ${data.orders > 0 ? data.sales / data.orders : 0}, ${data.refunds})
           ON CONFLICT (sale_date) DO UPDATE SET
-            total_sales = EXCLUDED.total_sales,
-            total_orders = EXCLUDED.total_orders,
-            avg_order_value = EXCLUDED.avg_order_value,
-            refunds = EXCLUDED.refunds`
+            total_sales = GREATEST(EXCLUDED.total_sales, daily_sales.total_sales),
+            total_orders = GREATEST(EXCLUDED.total_orders, daily_sales.total_orders),
+            avg_order_value = CASE WHEN EXCLUDED.total_sales >= daily_sales.total_sales THEN EXCLUDED.avg_order_value ELSE daily_sales.avg_order_value END,
+            refunds = GREATEST(EXCLUDED.refunds, daily_sales.refunds)`
       ));
     }
     await addLog('info', `עודכנו ${dailyEntries.length} ימי מכירות ב-daily_sales.`);
