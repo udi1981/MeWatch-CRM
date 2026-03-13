@@ -728,6 +728,59 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       await addLog('info', `${wixFormSubmissions.length} פניות מטפסים עובדו.`);
     }
 
+    // ==================== BUILD DAILY SALES ====================
+    const dailySalesMap: Record<string, { sales: number; orders: number; refunds: number }> = {};
+    const toIsraelDate = (dateStr: string): string | null => {
+      try {
+        const d = new Date(dateStr);
+        if (isNaN(d.getTime())) return null;
+        return d.toLocaleDateString('en-CA', { timeZone: 'Asia/Jerusalem' }); // YYYY-MM-DD
+      } catch { return null; }
+    };
+
+    // Aggregate pricing plan orders
+    for (const order of allOrders) {
+      const dateStr = order.startDate || order.createdDate || order._createdDate;
+      if (!dateStr) continue;
+      const date = toIsraelDate(dateStr);
+      if (!date) continue;
+      const price = parseFloat(order.planPrice || order.priceDetails?.planPrice || order.pricing?.prices?.[0]?.price?.total || order.priceDetails?.total || '0');
+      if (price <= 0) continue;
+      if (!dailySalesMap[date]) dailySalesMap[date] = { sales: 0, orders: 0, refunds: 0 };
+      dailySalesMap[date].sales += price;
+      dailySalesMap[date].orders += 1;
+      if (order.lastPaymentStatus === 'REFUNDED') dailySalesMap[date].refunds += price;
+    }
+
+    // Aggregate ecommerce orders
+    for (const eo of ecomOrders) {
+      const dateStr = eo._createdDate || eo.createdDate || eo.dateCreated;
+      if (!dateStr) continue;
+      const date = toIsraelDate(dateStr);
+      if (!date) continue;
+      const amount = parseFloat(eo.priceSummary?.total?.amount || eo.totals?.total || '0');
+      if (amount <= 0) continue;
+      if (!dailySalesMap[date]) dailySalesMap[date] = { sales: 0, orders: 0, refunds: 0 };
+      dailySalesMap[date].sales += amount;
+      dailySalesMap[date].orders += 1;
+    }
+
+    // Upsert daily sales to DB
+    const dailyEntries = Object.entries(dailySalesMap);
+    for (let i = 0; i < dailyEntries.length; i += BATCH) {
+      const batch = dailyEntries.slice(i, i + BATCH);
+      await Promise.all(batch.map(([date, data]) =>
+        sql`INSERT INTO daily_sales (sale_date, total_sales, total_orders, avg_order_value, refunds)
+          VALUES (${date}, ${data.sales}, ${data.orders}, ${data.orders > 0 ? data.sales / data.orders : 0}, ${data.refunds})
+          ON CONFLICT (sale_date) DO UPDATE SET
+            total_sales = EXCLUDED.total_sales,
+            total_orders = EXCLUDED.total_orders,
+            avg_order_value = EXCLUDED.avg_order_value,
+            refunds = EXCLUDED.refunds`
+      ));
+    }
+    await addLog('info', `עודכנו ${dailyEntries.length} ימי מכירות ב-daily_sales.`);
+
     const subscriberCount = Array.from(customerMap.values()).filter((c: any) => c.tags.includes('subscriber')).length;
     await addLog('success', `סנכרון מלא הושלם! ${wixLeads.length} מנויים, ${customersToSave.length} לקוחות נשמרו (${subscriberCount} מנויים). ${allOrders.length} הזמנות מנויים${ecomOrders.length > 0 ? ` + ${ecomOrders.length} הזמנות חנות` : ''}.`);
 
