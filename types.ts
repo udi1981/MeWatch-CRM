@@ -156,6 +156,7 @@ export type SiteProduct = {
   synced_at?: string;
   media: SiteProductMedia[];
   variants: SiteProductVariant[];
+  collection_ids?: string[];
 };
 
 export type SiteProductMedia = {
@@ -201,6 +202,12 @@ export type SiteBlogPost = {
   published_at?: string;
   created_at: string;
   updated_at: string;
+  seo_title?: string;
+  seo_description?: string;
+  content_html?: string;
+  embedded_images?: string[];
+  embedded_videos?: string[];
+  structured_data?: Record<string, any>;
 };
 
 export type SiteBlogCategory = {

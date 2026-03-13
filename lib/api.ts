@@ -55,6 +55,9 @@ const api = {
   getSiteSocial: () => fetch('/api/wix/sync?data=social').then(json),
   getSiteStats: () => fetch('/api/wix/sync?data=stats').then(json),
   saveSocialLink: (data: any) => fetch('/api/wix/sync?action=save-social', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(json),
+  saveProduct: (data: any) => fetch('/api/wix/sync?action=save-product', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(json),
+  deleteProduct: (id: string) => fetch('/api/wix/sync?action=delete-product', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) }).then(json),
+  saveBlogPost: (data: any) => fetch('/api/wix/sync?action=save-blog-post', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(json),
 
   // AI
   aiAnalytics: (prompt: string, systemInstruction: string) => fetch('/api/ai', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, systemInstruction, type: 'analytics' }) }).then(json),

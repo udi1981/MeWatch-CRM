@@ -48,8 +48,9 @@ const SiteManagement: React.FC = () => {
   const loadProducts = async () => {
     setLoading(true);
     try {
-      const data = await api.getSiteProducts();
-      setProducts(data.products || []);
+      const [prodData, collData] = await Promise.all([api.getSiteProducts(), api.getSiteCollections()]);
+      setProducts(prodData.products || []);
+      setCollections(collData.collections || []);
     } catch {} finally { setLoading(false); }
   };
 
@@ -148,8 +149,8 @@ const SiteManagement: React.FC = () => {
         {activeTab === 'overview' && <OverviewTab stats={stats} onSync={handleSync} syncing={syncing} />}
         {activeTab === 'products' && (
           selectedProduct
-            ? <ProductDetail product={selectedProduct} onBack={() => setSelectedProduct(null)} />
-            : <ProductsTab products={products} loading={loading} onSelect={setSelectedProduct} />
+            ? <ProductEditor product={selectedProduct} collections={collections} onBack={() => setSelectedProduct(null)} onReload={loadProducts} />
+            : <ProductsTab products={products} collections={collections} loading={loading} onSelect={setSelectedProduct} onNewProduct={() => setSelectedProduct({ id: '', wix_id: '', name: '', slug: '', description: '', price: 0, currency: 'ILS', visible: true, in_stock: true, track_inventory: false, quantity: 0, specs: {}, media: [], variants: [], collection_ids: [], created_at: '', updated_at: '' })} />
         )}
         {activeTab === 'blog' && <BlogTab posts={blogPosts} categories={blogCategories} loading={loading} onReload={loadBlog} />}
         {activeTab === 'coupons' && <CouponsTab coupons={coupons} loading={loading} />}
@@ -213,33 +214,59 @@ const OverviewTab: React.FC<{ stats: SiteStats | null; onSync: (type: string) =>
   </div>
 );
 
-const ProductsTab: React.FC<{ products: SiteProduct[]; loading: boolean; onSelect: (p: SiteProduct) => void }> = ({ products, loading, onSelect }) => {
+const ProductsTab: React.FC<{ products: SiteProduct[]; collections: SiteCollection[]; loading: boolean; onSelect: (p: SiteProduct) => void; onNewProduct: () => void }> = ({ products, collections, loading, onSelect, onNewProduct }) => {
   const [search, setSearch] = useState('');
-  const filtered = products.filter(p =>
-    p.name.toLowerCase().includes(search.toLowerCase()) ||
-    (p.sku && p.sku.toLowerCase().includes(search.toLowerCase()))
-  );
+  const [filterCol, setFilterCol] = useState('');
+
+  const collectionCounts = React.useMemo(() => {
+    const counts: Record<string, number> = {};
+    products.forEach(p => (p.collection_ids || []).forEach(cid => { counts[cid] = (counts[cid] || 0) + 1; }));
+    return counts;
+  }, [products]);
+
+  const filtered = products.filter(p => {
+    const matchSearch = !search || p.name.toLowerCase().includes(search.toLowerCase()) || (p.sku && p.sku.toLowerCase().includes(search.toLowerCase()));
+    const matchCol = !filterCol || (p.collection_ids || []).includes(filterCol);
+    return matchSearch && matchCol;
+  });
 
   if (loading) return <div className="flex items-center justify-center h-40 text-gray-400"><LoadingDots /> <span className="mr-2 text-sm">טוען מוצרים...</span></div>;
 
   return (
     <div className="space-y-4">
-      <input
-        value={search}
-        onChange={e => setSearch(e.target.value)}
-        placeholder="חיפוש מוצר..."
-        className="w-full px-4 py-2.5 bg-white border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-400 outline-none"
-      />
+      {/* Top bar: search + new product */}
+      <div className="flex items-center gap-3">
+        <input value={search} onChange={e => setSearch(e.target.value)} placeholder="חיפוש מוצר..."
+          className="flex-1 px-4 py-2.5 bg-white border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-400 outline-none" />
+        <button onClick={onNewProduct}
+          className="px-4 py-2.5 bg-blue-600 text-white rounded-xl text-sm font-bold hover:bg-blue-700 transition-colors flex items-center gap-1 shadow-lg shadow-blue-200 whitespace-nowrap">
+          ➕ מוצר חדש
+        </button>
+      </div>
+
+      {/* Category filter chips */}
+      {collections.length > 0 && (
+        <div className="flex gap-2 overflow-x-auto pb-1">
+          <button onClick={() => setFilterCol('')}
+            className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors shrink-0 ${!filterCol ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}>
+            הכל ({products.length})
+          </button>
+          {collections.filter(c => collectionCounts[c.id]).map(c => (
+            <button key={c.id} onClick={() => setFilterCol(filterCol === c.id ? '' : c.id)}
+              className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors shrink-0 ${filterCol === c.id ? 'bg-blue-600 text-white border-blue-600' : 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100'}`}>
+              {c.name} ({collectionCounts[c.id] || 0})
+            </button>
+          ))}
+        </div>
+      )}
+
       {filtered.length === 0 ? (
         <div className="text-center py-12 text-gray-400 text-sm">{products.length === 0 ? 'אין מוצרים — לחץ "סנכרון מ-Wix"' : 'לא נמצאו תוצאות'}</div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
           {filtered.map(p => (
-            <div
-              key={p.id}
-              onClick={() => onSelect(p)}
-              className="bg-white border border-gray-200 rounded-xl overflow-hidden hover:shadow-lg transition-shadow cursor-pointer"
-            >
+            <div key={p.id} onClick={() => onSelect(p)}
+              className="bg-white border border-gray-200 rounded-xl overflow-hidden hover:shadow-lg transition-shadow cursor-pointer">
               {p.media?.[0]?.url ? (
                 <img src={p.media[0].url} alt={p.name} className="w-full h-40 object-cover" />
               ) : (
@@ -271,80 +298,281 @@ const ProductsTab: React.FC<{ products: SiteProduct[]; loading: boolean; onSelec
   );
 };
 
-const ProductDetail: React.FC<{ product: SiteProduct; onBack: () => void }> = ({ product, onBack }) => (
-  <div className="space-y-4">
-    <button onClick={onBack} className="flex items-center gap-1 text-sm text-gray-500 hover:text-gray-800 transition-colors">
-      → חזרה למוצרים
+const ProductEditor: React.FC<{ product: SiteProduct; collections: SiteCollection[]; onBack: () => void; onReload: () => void }> = ({ product, collections, onBack, onReload }) => {
+  const isNew = !product.id;
+  const [name, setName] = useState(product.name);
+  const [slug, setSlug] = useState(product.slug);
+  const [description, setDescription] = useState(product.description);
+  const [price, setPrice] = useState(String(product.price || ''));
+  const [comparePrice, setComparePrice] = useState(String(product.compare_price || ''));
+  const [sku, setSku] = useState(product.sku || '');
+  const [weight, setWeight] = useState(String(product.weight || ''));
+  const [productType, setProductType] = useState(product.product_type || 'physical');
+  const [visible, setVisible] = useState(product.visible);
+  const [inStock, setInStock] = useState(product.in_stock);
+  const [trackInventory, setTrackInventory] = useState(product.track_inventory);
+  const [quantity, setQuantity] = useState(String(product.quantity || 0));
+  const [media, setMedia] = useState(product.media || []);
+  const [newMediaUrl, setNewMediaUrl] = useState('');
+  const [newMediaType, setNewMediaType] = useState<'image' | 'video'>('image');
+  const [specs, setSpecs] = useState<{ key: string; value: string }[]>(Object.entries(product.specs || {}).map(([k, v]) => ({ key: k, value: v })));
+  const [variants, setVariants] = useState(product.variants || []);
+  const [collectionIds, setCollectionIds] = useState<string[]>(product.collection_ids || []);
+  const [seoTitle, setSeoTitle] = useState(product.seo_title || '');
+  const [seoDesc, setSeoDesc] = useState(product.seo_description || '');
+  const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  const handleSave = async () => {
+    if (!name.trim()) return alert('שם מוצר חובה');
+    setSaving(true);
+    try {
+      const data = {
+        id: product.id || undefined, wix_id: product.wix_id || undefined,
+        name, slug: slug || name.replace(/\s+/g, '-').toLowerCase(), description,
+        price: parseFloat(price) || 0, compare_price: parseFloat(comparePrice) || 0,
+        sku, weight: parseFloat(weight) || 0, product_type: productType,
+        visible, in_stock: inStock, track_inventory: trackInventory, quantity: parseInt(quantity) || 0,
+        media: media.map((m, i) => ({ url: m.url, thumbnail_url: m.thumbnail_url || m.url, media_type: m.media_type || 'image', alt_text: m.alt_text || '' })),
+        specs: Object.fromEntries(specs.filter(s => s.key.trim()).map(s => [s.key, s.value])),
+        variants: variants.map(v => ({ id: v.id, sku: v.sku, price: v.price, options: v.options, visible: true, in_stock: v.in_stock })),
+        collection_ids: collectionIds,
+        seo_title: seoTitle, seo_description: seoDesc,
+      };
+      await api.saveProduct(data);
+      onReload();
+      onBack();
+    } catch (err: any) { alert('שגיאה: ' + err.message); } finally { setSaving(false); }
+  };
+
+  const handleDelete = async () => {
+    if (!product.id || !confirm('למחוק את המוצר?')) return;
+    setDeleting(true);
+    try {
+      await api.deleteProduct(product.id);
+      onReload();
+      onBack();
+    } catch (err: any) { alert('שגיאה: ' + err.message); } finally { setDeleting(false); }
+  };
+
+  const addMedia = () => {
+    if (!newMediaUrl.trim()) return;
+    setMedia([...media, { id: `new_${Date.now()}`, url: newMediaUrl, media_type: newMediaType, alt_text: '', sort_order: media.length } as any]);
+    setNewMediaUrl('');
+  };
+
+  const moveMedia = (idx: number, dir: -1 | 1) => {
+    const arr = [...media];
+    const swap = idx + dir;
+    if (swap < 0 || swap >= arr.length) return;
+    [arr[idx], arr[swap]] = [arr[swap], arr[idx]];
+    setMedia(arr);
+  };
+
+  const Toggle: React.FC<{ label: string; value: boolean; onChange: (v: boolean) => void }> = ({ label, value, onChange }) => (
+    <button type="button" onClick={() => onChange(!value)} className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium border transition-colors ${value ? 'bg-green-50 border-green-300 text-green-700' : 'bg-gray-50 border-gray-200 text-gray-500'}`}>
+      <span className={`w-8 h-5 rounded-full relative transition-colors ${value ? 'bg-green-500' : 'bg-gray-300'}`}>
+        <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${value ? 'right-0.5' : 'right-3.5'}`} />
+      </span>
+      {label}
     </button>
-    <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
-      {/* Images */}
-      {product.media && product.media.length > 0 && (
-        <div className="flex gap-2 p-4 overflow-x-auto">
-          {product.media.map((m, i) => (
-            <img key={i} src={m.url} alt={m.alt_text || product.name} className="h-48 rounded-xl object-cover shrink-0" />
-          ))}
-        </div>
-      )}
-      <div className="p-4 md:p-6 space-y-4">
+  );
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <button onClick={onBack} className="flex items-center gap-1 text-sm text-gray-500 hover:text-gray-800">→ חזרה למוצרים</button>
+        <h2 className="font-bold text-gray-800">{isNew ? '🆕 מוצר חדש' : `✏️ עריכת: ${product.name}`}</h2>
+      </div>
+
+      <div className="bg-white rounded-2xl border border-gray-200 p-4 md:p-6 space-y-5">
+        {/* Media Gallery */}
         <div>
-          <h2 className="text-2xl font-black text-gray-800">{product.name}</h2>
-          {product.slug && <p className="text-xs text-gray-400 mt-1">/{product.slug}</p>}
+          <label className="block text-xs font-bold text-gray-500 mb-2">🖼️ מדיה ({media.length})</label>
+          {media.length > 0 && (
+            <div className="flex gap-3 overflow-x-auto pb-2">
+              {media.map((m, i) => (
+                <div key={i} className="relative shrink-0 group">
+                  {m.media_type === 'video' ? (
+                    <div className="w-32 h-32 bg-gray-900 rounded-xl flex items-center justify-center text-white text-3xl">🎬</div>
+                  ) : (
+                    <img src={m.url} alt={m.alt_text || ''} className="w-32 h-32 object-cover rounded-xl border border-gray-200" />
+                  )}
+                  <div className="absolute top-1 left-1 flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                    {i > 0 && <button onClick={() => moveMedia(i, -1)} className="w-5 h-5 bg-white/90 rounded text-[10px] shadow hover:bg-white">→</button>}
+                    {i < media.length - 1 && <button onClick={() => moveMedia(i, 1)} className="w-5 h-5 bg-white/90 rounded text-[10px] shadow hover:bg-white">←</button>}
+                    <button onClick={() => setMedia(media.filter((_, j) => j !== i))} className="w-5 h-5 bg-red-500 text-white rounded text-[10px] shadow hover:bg-red-600">✕</button>
+                  </div>
+                  {i === 0 && <span className="absolute bottom-1 right-1 text-[9px] bg-blue-600 text-white px-1.5 py-0.5 rounded">ראשי</span>}
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="flex gap-2 mt-2">
+            <select value={newMediaType} onChange={e => setNewMediaType(e.target.value as any)} className="px-2 py-2 border border-gray-200 rounded-lg text-xs bg-white">
+              <option value="image">🖼️ תמונה</option>
+              <option value="video">🎬 סרטון</option>
+            </select>
+            <input value={newMediaUrl} onChange={e => setNewMediaUrl(e.target.value)} placeholder="URL של תמונה או סרטון..."
+              className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-400 outline-none" />
+            <button onClick={addMedia} disabled={!newMediaUrl.trim()} className="px-3 py-2 bg-blue-600 text-white rounded-lg text-xs font-bold disabled:opacity-50 hover:bg-blue-700">הוסף</button>
+          </div>
         </div>
-        <div className="flex items-center gap-3">
-          <span className="text-3xl font-black text-emerald-600">₪{product.price}</span>
-          {product.compare_price && product.compare_price > product.price && (
-            <span className="text-lg text-gray-400 line-through">₪{product.compare_price}</span>
+
+        {/* Core fields */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div>
+            <label className="block text-xs font-bold text-gray-500 mb-1">שם מוצר *</label>
+            <input value={name} onChange={e => setName(e.target.value)} className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold focus:ring-2 focus:ring-blue-400 outline-none" />
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-gray-500 mb-1">Slug</label>
+            <input value={slug} onChange={e => setSlug(e.target.value)} placeholder={name.replace(/\s+/g, '-').toLowerCase()}
+              className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-400 outline-none" dir="ltr" />
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-gray-500 mb-1">מחיר (₪)</label>
+            <input type="number" value={price} onChange={e => setPrice(e.target.value)} className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold text-emerald-700 focus:ring-2 focus:ring-blue-400 outline-none" dir="ltr" />
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-gray-500 mb-1">מחיר השוואה (₪)</label>
+            <input type="number" value={comparePrice} onChange={e => setComparePrice(e.target.value)} className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-400 outline-none" dir="ltr" />
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-gray-500 mb-1">SKU</label>
+            <input value={sku} onChange={e => setSku(e.target.value)} className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-400 outline-none" dir="ltr" />
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-gray-500 mb-1">משקל (ק"ג)</label>
+            <input type="number" value={weight} onChange={e => setWeight(e.target.value)} className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-400 outline-none" dir="ltr" />
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-gray-500 mb-1">סוג מוצר</label>
+            <select value={productType} onChange={e => setProductType(e.target.value)} className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm">
+              <option value="physical">פיזי</option>
+              <option value="digital">דיגיטלי</option>
+            </select>
+          </div>
+          {trackInventory && (
+            <div>
+              <label className="block text-xs font-bold text-gray-500 mb-1">כמות במלאי</label>
+              <input type="number" value={quantity} onChange={e => setQuantity(e.target.value)} className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-400 outline-none" dir="ltr" />
+            </div>
           )}
         </div>
-        {product.description && (
-          <div className="text-sm text-gray-600 leading-relaxed" dangerouslySetInnerHTML={{ __html: product.description }} />
-        )}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          {[
-            { label: 'SKU', value: product.sku || '-' },
-            { label: 'סוג', value: product.product_type || '-' },
-            { label: 'משקל', value: product.weight ? `${product.weight} ק"ג` : '-' },
-            { label: 'מלאי', value: product.track_inventory ? `${product.quantity} יח'` : 'לא נעקב' },
-          ].map(f => (
-            <div key={f.label} className="bg-gray-50 rounded-xl p-3">
-              <div className="text-[10px] text-gray-400 font-medium">{f.label}</div>
-              <div className="text-sm font-bold text-gray-700">{f.value}</div>
+
+        {/* Toggles */}
+        <div className="flex gap-3 flex-wrap">
+          <Toggle label="מוצג באתר" value={visible} onChange={setVisible} />
+          <Toggle label="במלאי" value={inStock} onChange={setInStock} />
+          <Toggle label="מעקב מלאי" value={trackInventory} onChange={setTrackInventory} />
+        </div>
+
+        {/* Description */}
+        <div>
+          <label className="block text-xs font-bold text-gray-500 mb-1">תיאור מוצר</label>
+          <textarea value={description} onChange={e => setDescription(e.target.value)} placeholder="תיאור מפורט של המוצר..."
+            className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm min-h-[120px] resize-y focus:ring-2 focus:ring-blue-400 outline-none" dir="rtl" />
+        </div>
+
+        {/* Specs */}
+        <div>
+          <label className="block text-xs font-bold text-gray-500 mb-2">📋 מפרט טכני</label>
+          {specs.map((s, i) => (
+            <div key={i} className="flex gap-2 mb-2">
+              <input value={s.key} onChange={e => { const arr = [...specs]; arr[i].key = e.target.value; setSpecs(arr); }} placeholder="שם מאפיין"
+                className="w-1/3 px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm" />
+              <input value={s.value} onChange={e => { const arr = [...specs]; arr[i].value = e.target.value; setSpecs(arr); }} placeholder="ערך"
+                className="flex-1 px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm" />
+              <button onClick={() => setSpecs(specs.filter((_, j) => j !== i))} className="px-2 text-red-400 hover:text-red-600 text-lg">✕</button>
             </div>
           ))}
+          <button onClick={() => setSpecs([...specs, { key: '', value: '' }])} className="text-xs text-blue-600 font-medium hover:underline">+ הוסף מאפיין</button>
         </div>
-        {product.specs && Object.keys(product.specs).length > 0 && (
+
+        {/* Variants */}
+        {variants.length > 0 && (
           <div>
-            <h3 className="font-bold text-gray-700 mb-2">מפרט טכני</h3>
-            {Object.entries(product.specs).map(([key, val]) => (
-              <div key={key} className="flex border-b border-gray-100 py-2 text-sm">
-                <span className="font-medium text-gray-600 w-1/3">{key}</span>
-                <span className="text-gray-800" dangerouslySetInnerHTML={{ __html: val }} />
+            <label className="block text-xs font-bold text-gray-500 mb-2">🏷️ וריאנטים ({variants.length})</label>
+            {variants.map((v, i) => (
+              <div key={v.id} className="flex items-center gap-3 bg-gray-50 rounded-lg px-3 py-2 mb-1 text-sm">
+                <span className="text-gray-600 flex-1">{Object.values(v.options || {}).join(' / ') || v.sku || v.id}</span>
+                <input type="number" value={v.price || ''} onChange={e => { const arr = [...variants]; arr[i] = { ...arr[i], price: parseFloat(e.target.value) || 0 }; setVariants(arr); }}
+                  className="w-20 px-2 py-1 border border-gray-200 rounded text-sm text-center" dir="ltr" placeholder="מחיר" />
+                <input value={v.sku || ''} onChange={e => { const arr = [...variants]; arr[i] = { ...arr[i], sku: e.target.value }; setVariants(arr); }}
+                  className="w-24 px-2 py-1 border border-gray-200 rounded text-sm" dir="ltr" placeholder="SKU" />
+                <button onClick={() => { const arr = [...variants]; arr[i] = { ...arr[i], in_stock: !arr[i].in_stock }; setVariants(arr); }}
+                  className={`text-[10px] px-2 py-1 rounded-full ${v.in_stock ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                  {v.in_stock ? 'במלאי' : 'אזל'}
+                </button>
               </div>
             ))}
           </div>
         )}
-        {product.variants && product.variants.length > 0 && (
+
+        {/* Categories */}
+        {collections.length > 0 && (
           <div>
-            <h3 className="font-bold text-gray-700 mb-2">וריאנטים ({product.variants.length})</h3>
-            <div className="space-y-1">
-              {product.variants.map(v => (
-                <div key={v.id} className="flex items-center justify-between bg-gray-50 rounded-lg px-3 py-2 text-sm">
-                  <span className="text-gray-600">{Object.values(v.options || {}).join(' / ') || v.sku || v.id}</span>
-                  <div className="flex items-center gap-3">
-                    {v.price && <span className="font-bold">₪{v.price}</span>}
-                    <span className={`text-[10px] px-2 py-0.5 rounded-full ${v.in_stock ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-                      {v.in_stock ? 'במלאי' : 'אזל'}
-                    </span>
-                  </div>
-                </div>
+            <label className="block text-xs font-bold text-gray-500 mb-2">📂 קטגוריות</label>
+            <div className="flex gap-2 flex-wrap">
+              {collections.map(c => (
+                <label key={c.id} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs cursor-pointer transition-colors ${collectionIds.includes(c.id) ? 'bg-blue-50 border-blue-400 text-blue-700' : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
+                  <input type="checkbox" checked={collectionIds.includes(c.id)}
+                    onChange={e => setCollectionIds(e.target.checked ? [...collectionIds, c.id] : collectionIds.filter(x => x !== c.id))}
+                    className="w-3.5 h-3.5 rounded border-gray-300 text-blue-600" />
+                  {c.name}
+                </label>
               ))}
             </div>
           </div>
         )}
+
+        {/* SEO */}
+        <div className="bg-blue-50 rounded-xl p-4 border border-blue-200">
+          <h3 className="font-bold text-blue-800 text-sm mb-3">🔍 SEO</h3>
+          <div className="space-y-3">
+            <div>
+              <label className="block text-xs font-bold text-blue-600 mb-1">כותרת SEO (60 תו)</label>
+              <input value={seoTitle || name} onChange={e => setSeoTitle(e.target.value)} maxLength={60}
+                className="w-full px-3 py-2 bg-white border border-blue-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-400 outline-none" />
+              <div className="text-[10px] text-blue-400 mt-0.5">{(seoTitle || name).length}/60</div>
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-blue-600 mb-1">תיאור SEO (160 תו)</label>
+              <textarea value={seoDesc} onChange={e => setSeoDesc(e.target.value)} maxLength={160}
+                className="w-full px-3 py-2 bg-white border border-blue-200 rounded-lg text-sm min-h-[50px] resize-y focus:ring-2 focus:ring-blue-400 outline-none" />
+              <div className="text-[10px] text-blue-400 mt-0.5">{seoDesc.length}/160</div>
+            </div>
+            <div className="bg-white rounded-lg p-3 border border-gray-200">
+              <div className="text-[10px] text-gray-400 mb-1">תצוגה מקדימה ב-Google:</div>
+              <div className="text-blue-700 text-sm font-medium truncate">{seoTitle || name || 'שם המוצר'}</div>
+              <div className="text-green-700 text-xs truncate">mewatch.co.il/products/{slug || name.replace(/\s+/g, '-').toLowerCase()}</div>
+              <div className="text-gray-600 text-xs line-clamp-2 mt-0.5">{seoDesc || description?.substring(0, 160) || 'תיאור המוצר...'}</div>
+            </div>
+          </div>
+        </div>
+
+        {/* Actions */}
+        <div className="flex gap-3 pt-2 flex-wrap">
+          <button onClick={handleSave} disabled={saving || !name.trim()}
+            className="px-6 py-2.5 bg-emerald-600 text-white rounded-xl font-bold hover:bg-emerald-700 transition-colors disabled:opacity-50 flex items-center gap-2">
+            {saving ? <><LoadingDots /> <span>שומר...</span></> : <><span>💾</span> <span>שמור מוצר</span></>}
+          </button>
+          <button disabled className="px-6 py-2.5 bg-blue-100 text-blue-400 rounded-xl font-medium cursor-not-allowed flex items-center gap-2" title="בקרוב">
+            🚀 דחיפה ל-Wix (בקרוב)
+          </button>
+          {!isNew && (
+            <button onClick={handleDelete} disabled={deleting}
+              className="px-6 py-2.5 bg-white border border-red-300 text-red-600 rounded-xl font-medium hover:bg-red-50 transition-colors disabled:opacity-50 flex items-center gap-2">
+              {deleting ? 'מוחק...' : '🗑️ מחק'}
+            </button>
+          )}
+          <button onClick={onBack} className="px-6 py-2.5 bg-gray-100 text-gray-600 rounded-xl font-medium hover:bg-gray-200 transition-colors">ביטול</button>
+        </div>
       </div>
     </div>
-  </div>
-);
+  );
+};
 
 const BlogTab: React.FC<{ posts: SiteBlogPost[]; categories: SiteBlogCategory[]; loading: boolean; onReload: () => void }> = ({ posts, categories, loading, onReload }) => {
   const [selectedPost, setSelectedPost] = useState<SiteBlogPost | null>(null);
@@ -581,7 +809,19 @@ const BlogTab: React.FC<{ posts: SiteBlogPost[]; categories: SiteBlogCategory[];
               {selectedPost.author && <span>{selectedPost.author}</span>}
               {selectedPost.published_at && <span>{new Date(selectedPost.published_at).toLocaleDateString('he-IL')}</span>}
             </div>
-            {selectedPost.content ? (
+            {/* Embedded images gallery */}
+            {selectedPost.embedded_images && selectedPost.embedded_images.length > 0 && !selectedPost.content_html && (
+              <div className="flex gap-2 overflow-x-auto pb-2 mb-4">
+                {selectedPost.embedded_images.map((img: string, i: number) => (
+                  <img key={i} src={img} alt="" className="h-32 rounded-lg object-cover shrink-0 border border-gray-200" />
+                ))}
+              </div>
+            )}
+            {/* Rich HTML content or plain text fallback */}
+            {selectedPost.content_html ? (
+              <div className="prose prose-sm max-w-none text-gray-700 leading-relaxed" style={{ direction: 'rtl' }}
+                dangerouslySetInnerHTML={{ __html: selectedPost.content_html }} />
+            ) : selectedPost.content ? (
               <div className="prose prose-sm max-w-none text-gray-700 leading-relaxed whitespace-pre-wrap" style={{ direction: 'rtl' }}>
                 {selectedPost.content}
               </div>
@@ -591,12 +831,31 @@ const BlogTab: React.FC<{ posts: SiteBlogPost[]; categories: SiteBlogCategory[];
                 <p className="text-yellow-600 text-xs mt-1">לחץ "סנכרון מ-Wix" כדי למשוך את תוכן הפוסטים</p>
               </div>
             )}
+            {/* Embedded videos */}
+            {selectedPost.embedded_videos && selectedPost.embedded_videos.length > 0 && (
+              <div className="mt-4 space-y-2">
+                <h3 className="font-bold text-gray-700 text-sm">🎬 סרטונים</h3>
+                {selectedPost.embedded_videos.map((url: string, i: number) => (
+                  <a key={i} href={url} target="_blank" rel="noopener noreferrer"
+                    className="flex items-center gap-2 px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm text-blue-600 hover:bg-blue-50 transition-colors">
+                    🎬 {url}
+                  </a>
+                ))}
+              </div>
+            )}
             {selectedPost.tags && selectedPost.tags.length > 0 && (
               <div className="flex gap-1 mt-6 pt-4 border-t border-gray-100 flex-wrap">
                 {selectedPost.tags.map(t => (
                   <span key={t} className="text-xs px-2 py-1 bg-purple-50 border border-purple-200 rounded-full text-purple-600">#{t}</span>
                 ))}
               </div>
+            )}
+            {/* Structured Data preview */}
+            {selectedPost.structured_data && Object.keys(selectedPost.structured_data).length > 1 && (
+              <details className="mt-4 bg-gray-50 rounded-xl border border-gray-200">
+                <summary className="px-4 py-2 text-xs font-bold text-gray-600 cursor-pointer hover:text-gray-800">📊 Schema.org Structured Data (JSON-LD)</summary>
+                <pre className="px-4 py-3 text-[10px] text-gray-500 overflow-x-auto" dir="ltr">{JSON.stringify(selectedPost.structured_data, null, 2)}</pre>
+              </details>
             )}
           </div>
         </article>

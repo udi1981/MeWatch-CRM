@@ -128,11 +128,30 @@ async function syncSiteProducts() {
   return { products: allProducts.length };
 }
 
+function extractNodeText(nodes: any[]): string {
+  return (nodes || []).map((n: any) => {
+    if (n.type === 'TEXT' || n.type === 'text') {
+      let text = n.textData?.text || n.data?.text || n.text || '';
+      const decs = n.textData?.decorations || n.data?.decorations || [];
+      for (const d of decs) {
+        if (d.type === 'BOLD' || d.type === 'bold') text = `<strong>${text}</strong>`;
+        if (d.type === 'ITALIC' || d.type === 'italic') text = `<em>${text}</em>`;
+        if (d.type === 'UNDERLINE' || d.type === 'underline') text = `<u>${text}</u>`;
+        if ((d.type === 'LINK' || d.type === 'link') && d.linkData?.link?.url) text = `<a href="${d.linkData.link.url}">${text}</a>`;
+      }
+      return text;
+    }
+    if (n.nodes) return extractNodeText(n.nodes);
+    return '';
+  }).join('');
+}
+
 async function syncSiteBlog() {
   const allPosts: any[] = [];
   let offset = 0;
+  // Fetch with both CONTENT_TEXT and RICH_CONTENT for max data
   while (true) {
-    const r = await fetch(`${WIX_BASE}/blog/v3/posts?paging.limit=100&paging.offset=${offset}&fieldsets=CONTENT_TEXT`, {
+    const r = await fetch(`${WIX_BASE}/blog/v3/posts?paging.limit=100&paging.offset=${offset}&fieldsets=CONTENT_TEXT&fieldsets=RICH_CONTENT`, {
       method: 'GET', headers: WIX_HEADERS,
     });
     if (!r.ok) {
@@ -149,16 +168,65 @@ async function syncSiteBlog() {
   }
 
   for (const p of allPosts) {
-    // Wix Blog v3: with fieldsets=CONTENT_TEXT, content comes in contentText or plainContent
-    const content = p.contentText || p.plainContent || p.richContent?.text || p.content || '';
+    const content = p.contentText || p.plainContent || p.content || '';
     const excerpt = (p.excerpt || content.substring(0, 200)).trim();
     const coverImage = p.coverImage?.url || p.coverImage?.image?.url || p.media?.image?.url || p.heroImage?.url || '';
     const tags = (p.tags || []).map((t: any) => typeof t === 'string' ? t : t.label || t.name || '');
     const categoryIds = (p.categoryIds || []);
 
-    await sql`INSERT INTO site_blog_posts (id, wix_id, title, slug, content, excerpt, cover_image, status, author, category_ids, tags, published_at, synced_at)
-      VALUES (${p.id || p._id}, ${p.id || p._id}, ${p.title || ''}, ${p.slug || ''}, ${content}, ${excerpt}, ${coverImage}, ${p.published ? 'published' : 'draft'}, ${p.author?.displayName || ''}, ${categoryIds}, ${tags}, ${p.firstPublishedDate || p.publishedDate || null}, NOW())
-      ON CONFLICT (wix_id) DO UPDATE SET title = EXCLUDED.title, slug = EXCLUDED.slug, content = EXCLUDED.content, excerpt = EXCLUDED.excerpt, cover_image = EXCLUDED.cover_image, status = EXCLUDED.status, tags = EXCLUDED.tags, category_ids = EXCLUDED.category_ids, synced_at = NOW(), updated_at = NOW()`;
+    // Parse richContent nodes → HTML + extract images/videos
+    let contentHtml = '';
+    const embeddedImages: string[] = [];
+    const embeddedVideos: string[] = [];
+    try {
+      const nodes = p.richContent?.nodes || [];
+      for (const node of nodes) {
+        const t = node.type || '';
+        if (t === 'PARAGRAPH' || t === 'paragraph') {
+          const text = extractNodeText(node.nodes || node.data?.nodes || []);
+          if (text) contentHtml += `<p>${text}</p>`;
+        } else if (t === 'HEADING' || t === 'heading') {
+          const lv = node.headingData?.level || node.data?.level || 2;
+          const text = extractNodeText(node.nodes || node.data?.nodes || []);
+          contentHtml += `<h${lv}>${text}</h${lv}>`;
+        } else if (t === 'IMAGE' || t === 'image') {
+          const src = node.imageData?.image?.src?.url || node.imageData?.src?.url || node.data?.image?.src?.url || '';
+          const wixImg = src.startsWith('wix:image://') ? `https://static.wixstatic.com/media/${src.replace('wix:image://v1/', '').split('/')[0]}` : src;
+          if (wixImg) { embeddedImages.push(wixImg); contentHtml += `<img src="${wixImg}" alt="${node.imageData?.altText || ''}" />`; }
+        } else if (t === 'VIDEO' || t === 'video') {
+          const url = node.videoData?.video?.src?.url || node.data?.video?.src?.url || '';
+          if (url) { embeddedVideos.push(url); contentHtml += `<div class="video-embed"><a href="${url}" target="_blank">🎬 צפה בסרטון</a></div>`; }
+        } else if (t === 'BULLETED_LIST' || t === 'bulleted_list') {
+          contentHtml += `<ul>${(node.nodes || []).map((li: any) => `<li>${extractNodeText(li.nodes || [])}</li>`).join('')}</ul>`;
+        } else if (t === 'ORDERED_LIST' || t === 'ordered_list') {
+          contentHtml += `<ol>${(node.nodes || []).map((li: any) => `<li>${extractNodeText(li.nodes || [])}</li>`).join('')}</ol>`;
+        } else if (t === 'BLOCKQUOTE' || t === 'blockquote') {
+          contentHtml += `<blockquote>${extractNodeText(node.nodes || [])}</blockquote>`;
+        } else if (t === 'DIVIDER' || t === 'divider') {
+          contentHtml += '<hr />';
+        }
+      }
+    } catch { /* fallback: contentHtml stays empty, will use content instead */ }
+
+    // Add cover image to embedded if not already there
+    if (coverImage && !embeddedImages.includes(coverImage)) embeddedImages.unshift(coverImage);
+
+    // Generate Schema.org structured data
+    const structuredData = {
+      '@context': 'https://schema.org', '@type': 'Article',
+      headline: p.title || '',
+      description: excerpt,
+      image: embeddedImages[0] || coverImage || undefined,
+      author: { '@type': 'Organization', name: 'MeWatch' },
+      publisher: { '@type': 'Organization', name: 'MeWatch', logo: { '@type': 'ImageObject', url: 'https://mewatch.co.il/logo.png' } },
+      datePublished: p.firstPublishedDate || p.publishedDate || undefined,
+      dateModified: p.lastPublishedDate || undefined,
+      keywords: tags.join(', ') || undefined,
+    };
+
+    await sql`INSERT INTO site_blog_posts (id, wix_id, title, slug, content, content_html, excerpt, cover_image, status, author, category_ids, tags, embedded_images, embedded_videos, structured_data, published_at, synced_at)
+      VALUES (${p.id || p._id}, ${p.id || p._id}, ${p.title || ''}, ${p.slug || ''}, ${content}, ${contentHtml}, ${excerpt}, ${coverImage}, ${p.published ? 'published' : 'draft'}, ${p.author?.displayName || ''}, ${categoryIds}, ${tags}, ${embeddedImages}, ${embeddedVideos}, ${JSON.stringify(structuredData)}, ${p.firstPublishedDate || p.publishedDate || null}, NOW())
+      ON CONFLICT (wix_id) DO UPDATE SET title = EXCLUDED.title, slug = EXCLUDED.slug, content = EXCLUDED.content, content_html = EXCLUDED.content_html, excerpt = EXCLUDED.excerpt, cover_image = EXCLUDED.cover_image, status = EXCLUDED.status, tags = EXCLUDED.tags, category_ids = EXCLUDED.category_ids, embedded_images = EXCLUDED.embedded_images, embedded_videos = EXCLUDED.embedded_videos, structured_data = EXCLUDED.structured_data, synced_at = NOW(), updated_at = NOW()`;
   }
 
   // Sync blog categories
@@ -235,7 +303,8 @@ async function handleSiteData(req: VercelRequest, res: VercelResponse) {
       const products = await sql`
         SELECT p.*,
           COALESCE((SELECT json_agg(json_build_object('id', m.id, 'url', m.url, 'thumbnail_url', m.thumbnail_url, 'media_type', m.media_type, 'alt_text', m.alt_text) ORDER BY m.sort_order) FROM site_product_media m WHERE m.product_id = p.id), '[]') as media,
-          COALESCE((SELECT json_agg(json_build_object('id', v.id, 'sku', v.sku, 'price', v.price, 'options', v.options, 'in_stock', v.in_stock) ) FROM site_product_variants v WHERE v.product_id = p.id), '[]') as variants
+          COALESCE((SELECT json_agg(json_build_object('id', v.id, 'sku', v.sku, 'price', v.price, 'options', v.options, 'in_stock', v.in_stock) ) FROM site_product_variants v WHERE v.product_id = p.id), '[]') as variants,
+          COALESCE((SELECT json_agg(pc.collection_id) FROM site_product_collections pc WHERE pc.product_id = p.id), '[]') as collection_ids
         FROM site_products p ORDER BY p.updated_at DESC`;
       return res.json({ products });
     }
@@ -299,9 +368,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (!title) return res.status(400).json({ error: 'title required' });
       const postId = id || `local_${Date.now()}`;
       const slug = title.replace(/\s+/g, '-').toLowerCase();
-      await sql`INSERT INTO site_blog_posts (id, wix_id, title, slug, content, excerpt, cover_image, status, author, category_ids, tags, seo_title, seo_description, synced_at)
-        VALUES (${postId}, ${postId}, ${title}, ${slug}, ${content || ''}, ${excerpt || ''}, ${cover_image || ''}, 'draft', 'MeWatch', ${[]}, ${tags || []}, ${seo_title || null}, ${seo_description || null}, NOW())
-        ON CONFLICT (wix_id) DO UPDATE SET title = EXCLUDED.title, slug = EXCLUDED.slug, content = EXCLUDED.content, excerpt = EXCLUDED.excerpt, cover_image = EXCLUDED.cover_image, tags = EXCLUDED.tags, updated_at = NOW()`;
+      // Auto-generate structured data for GSO
+      const structuredData = JSON.stringify({
+        '@context': 'https://schema.org', '@type': 'Article',
+        headline: seo_title || title,
+        description: seo_description || excerpt || (content || '').substring(0, 160),
+        image: cover_image || undefined,
+        author: { '@type': 'Organization', name: 'MeWatch' },
+        publisher: { '@type': 'Organization', name: 'MeWatch', logo: { '@type': 'ImageObject', url: 'https://mewatch.co.il/logo.png' } },
+        datePublished: new Date().toISOString(),
+        keywords: (tags || []).join(', ') || undefined,
+      });
+      await sql`INSERT INTO site_blog_posts (id, wix_id, title, slug, content, excerpt, cover_image, status, author, category_ids, tags, seo_title, seo_description, structured_data, synced_at)
+        VALUES (${postId}, ${postId}, ${title}, ${slug}, ${content || ''}, ${excerpt || ''}, ${cover_image || ''}, 'draft', 'MeWatch', ${[]}, ${tags || []}, ${seo_title || null}, ${seo_description || null}, ${structuredData}, NOW())
+        ON CONFLICT (wix_id) DO UPDATE SET title = EXCLUDED.title, slug = EXCLUDED.slug, content = EXCLUDED.content, excerpt = EXCLUDED.excerpt, cover_image = EXCLUDED.cover_image, tags = EXCLUDED.tags, seo_title = EXCLUDED.seo_title, seo_description = EXCLUDED.seo_description, structured_data = EXCLUDED.structured_data, updated_at = NOW()`;
       await addLog('info', `Blog post saved: ${title}`);
       return res.json({ ok: true, id: postId });
     } catch (error: any) {
@@ -321,6 +401,60 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     } catch (error: any) {
       return res.status(500).json({ error: error.message });
     }
+  }
+
+  // Save product (local DB)
+  if (action === 'save-product') {
+    try {
+      const b = req.body || {};
+      if (!b.name) return res.status(400).json({ error: 'name required' });
+      const productId = b.id || `local_${Date.now()}`;
+      const slug = b.slug || b.name.replace(/\s+/g, '-').toLowerCase();
+      await sql`INSERT INTO site_products (id, wix_id, name, slug, description, price, compare_price, currency, sku, weight, visible, in_stock, track_inventory, quantity, product_type, specs, seo_title, seo_description, synced_at)
+        VALUES (${productId}, ${b.wix_id || productId}, ${b.name}, ${slug}, ${b.description || ''}, ${parseFloat(b.price) || 0}, ${parseFloat(b.compare_price) || null}, ${'ILS'}, ${b.sku || null}, ${parseFloat(b.weight) || null}, ${b.visible !== false}, ${b.in_stock !== false}, ${b.track_inventory === true}, ${parseInt(b.quantity) || 0}, ${b.product_type || 'physical'}, ${JSON.stringify(b.specs || {})}, ${b.seo_title || null}, ${b.seo_description || null}, NOW())
+        ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, slug = EXCLUDED.slug, description = EXCLUDED.description, price = EXCLUDED.price, compare_price = EXCLUDED.compare_price, sku = EXCLUDED.sku, weight = EXCLUDED.weight, visible = EXCLUDED.visible, in_stock = EXCLUDED.in_stock, track_inventory = EXCLUDED.track_inventory, quantity = EXCLUDED.quantity, product_type = EXCLUDED.product_type, specs = EXCLUDED.specs, seo_title = EXCLUDED.seo_title, seo_description = EXCLUDED.seo_description, updated_at = NOW()`;
+      // Media: delete + re-insert
+      await sql`DELETE FROM site_product_media WHERE product_id = ${productId}`;
+      const media = b.media || [];
+      for (let i = 0; i < media.length; i++) {
+        const m = media[i];
+        if (!m.url) continue;
+        await sql`INSERT INTO site_product_media (product_id, url, thumbnail_url, media_type, alt_text, sort_order)
+          VALUES (${productId}, ${m.url}, ${m.thumbnail_url || m.url}, ${m.media_type || 'image'}, ${m.alt_text || ''}, ${i})`;
+      }
+      // Variants: upsert existing
+      for (const v of (b.variants || [])) {
+        if (!v.id) continue;
+        await sql`UPDATE site_product_variants SET sku = ${v.sku || null}, price = ${parseFloat(v.price) || null}, visible = ${v.visible !== false}, in_stock = ${v.in_stock !== false}, options = ${JSON.stringify(v.options || {})} WHERE id = ${v.id}`;
+      }
+      // Collections: delete + re-insert
+      await sql`DELETE FROM site_product_collections WHERE product_id = ${productId}`;
+      for (const cid of (b.collection_ids || [])) {
+        await sql`INSERT INTO site_product_collections (product_id, collection_id) VALUES (${productId}, ${cid}) ON CONFLICT DO NOTHING`;
+      }
+      await addLog('info', `Product saved: ${b.name}`);
+      return res.json({ ok: true, id: productId });
+    } catch (error: any) {
+      return res.status(500).json({ error: error.message });
+    }
+  }
+
+  // Delete product (soft)
+  if (action === 'delete-product') {
+    try {
+      const { id } = req.body || {};
+      if (!id) return res.status(400).json({ error: 'id required' });
+      await sql`UPDATE site_products SET visible = false, updated_at = NOW() WHERE id = ${id}`;
+      await addLog('info', `Product deleted (soft): ${id}`);
+      return res.json({ ok: true });
+    } catch (error: any) {
+      return res.status(500).json({ error: error.message });
+    }
+  }
+
+  // Push product to Wix (stub)
+  if (action === 'push-product-to-wix') {
+    return res.json({ ok: false, error: 'Push to Wix not yet implemented — coming soon' });
   }
 
   // Site sync routes
